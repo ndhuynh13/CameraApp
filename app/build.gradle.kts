@@ -59,6 +59,16 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
+    // Image loading
+    implementation("io.coil-kt:coil-compose:2.4.0")
+    // CameraX core library
+    implementation ("androidx.camera:camera-core:1.3.4")
+    // CameraX Camera2 extensions
+    implementation ("androidx.camera:camera-camera2:1.3.4")
+    // CameraX Lifecycle extensions
+    implementation ("androidx.camera:camera-lifecycle:1.3.4")
+    // CameraX View class
+    implementation ("androidx.camera:camera-view:1.3.4")
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
@@ -66,4 +76,5 @@ dependencies {
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
+
 }
