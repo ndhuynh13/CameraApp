@@ -7,6 +7,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,12 +28,15 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.SmallTopAppBar
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -58,52 +62,119 @@ fun GalleryScreen(
     onEditImage: (GalleryImage) -> Unit
 ) {
     var selectedImage by remember { mutableStateOf<GalleryImage?>(null) }
+    var showFullscreen by remember { mutableStateOf<GalleryImage?>(null) }
+    var showDeleteDialog by remember { mutableStateOf<GalleryImage?>(null) }
+
+    // Delete Confirmation Dialog
+    showDeleteDialog?.let { imageToDelete ->
+        AlertDialog(
+            onDismissRequest = { showDeleteDialog = null },
+            title = { Text("Delete Image") },
+            text = { Text("Are you sure you want to delete this image?") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onDeleteImage(imageToDelete)
+                        showDeleteDialog = null
+                        showFullscreen = null // Đóng fullscreen nếu đang mở
+                        selectedImage = null // Đóng bottom action bar nếu đang mở
+                    }
+                ) {
+                    Text("Delete", color = Color(0xFFE53935))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteDialog = null }) {
+                    Text("Cancel")
+                }
+            },
+            containerColor = Color(0xFF2A2A2A),
+            titleContentColor = Color.White,
+            textContentColor = Color.White
+        )
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            // Header
-            SmallTopAppBar(
-                title = { Text("Gallery") },
-                navigationIcon = {
-                    IconButton(onClick = onClose) {
-                        Icon(Icons.Default.ArrowBack, "Back")
-                    }
+        if (showFullscreen != null) {
+            FullscreenImageScreen(
+                image = showFullscreen!!,
+                images = images,
+                onClose = { showFullscreen = null },
+                onDelete = {
+                    showDeleteDialog = showFullscreen
+                },
+                onImageChange = { newImage ->
+                    showFullscreen = newImage
                 }
             )
-
-            // Grid of images
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(3),
-                contentPadding = PaddingValues(4.dp)
+        } else {
+            // Background Box để xử lý click ra ngoài
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null // Bỏ hiệu ứng ripple
+                    ) { selectedImage = null }
             ) {
-                items(images) { image ->
-                    GalleryItem(
-                        image = image,
-                        onImageClick = { onImageClick(image.uri) },
-                        onLongPress = { selectedImage = image }
+                Column(modifier = Modifier.fillMaxSize()) {
+                    // Top App Bar
+                    SmallTopAppBar(
+                        title = { Text("Gallery") },
+                        navigationIcon = {
+                            IconButton(onClick = onClose) {
+                                Icon(
+                                    imageVector = Icons.Default.ArrowBack,
+                                    contentDescription = "Back",
+                                    tint = Color.White
+                                )
+                            }
+                        },
+                        colors = TopAppBarDefaults.smallTopAppBarColors(
+                            containerColor = Color.Black.copy(alpha = 0.7f),
+                            titleContentColor = Color.White
+                        )
+                    )
+
+                    // Grid of images
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(3),
+                        contentPadding = PaddingValues(4.dp),
+                        modifier = Modifier.clickable(enabled = false) {} // Ngăn chặn click event từ parent
+                    ) {
+                        items(images) { image ->
+                            GalleryItem(
+                                image = image,
+                                onImageClick = { showFullscreen = image },
+                                onLongPress = { selectedImage = image }
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Bottom Action Bar
+            AnimatedVisibility(
+                visible = selectedImage != null,
+                enter = slideInVertically(initialOffsetY = { it }),
+                exit = slideOutVertically(targetOffsetY = { it }),
+                modifier = Modifier.align(Alignment.BottomCenter)
+            ) {
+                Box(
+                    modifier = Modifier.clickable(enabled = false) {}
+                ) {
+                    BottomActionBar(
+                        onDelete = {
+                            showDeleteDialog = selectedImage // Hiển thị dialog xác nhận
+                        },
+                        onEdit = {
+                            selectedImage?.let { onEditImage(it) }
+                            selectedImage = null
+                        },
+                        onDismiss = { selectedImage = null }
                     )
                 }
             }
-        }
-
-        // Bottom Action Bar
-        AnimatedVisibility(
-            visible = selectedImage != null,
-            enter = slideInVertically(initialOffsetY = { it }),
-            exit = slideOutVertically(targetOffsetY = { it }),
-            modifier = Modifier.align(Alignment.BottomCenter)
-        ) {
-            BottomActionBar(
-                onDelete = {
-                    selectedImage?.let { onDeleteImage(it) }
-                    selectedImage = null
-                },
-                onEdit = {
-                    selectedImage?.let { onEditImage(it) }
-                    selectedImage = null
-                },
-                onDismiss = { selectedImage = null }
-            )
         }
     }
 }
