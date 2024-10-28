@@ -28,7 +28,8 @@ fun FullscreenImageScreen(
     images: List<GalleryImage>, // Thêm danh sách ảnh
     onClose: () -> Unit,
     onDelete: () -> Unit,
-    onImageChange: (GalleryImage) -> Unit
+    onImageChange: (GalleryImage) -> Unit,
+    onEdit: (GalleryImage) -> Unit
 ) {
     var scale by remember { mutableStateOf(1f) }
     var offsetX by remember { mutableStateOf(0f) }
@@ -242,7 +243,7 @@ fun FullscreenImageScreen(
                         )
                     }
 
-                    IconButton(onClick = { /* Edit functionality */ }) {
+                    IconButton(onClick = { onEdit(image) }) {
                         Icon(
                             imageVector = Icons.Default.Edit,
                             contentDescription = "Edit",

@@ -142,9 +142,6 @@ fun CameraScreen(
                     isGridEnabled = isGridEnabled,
                     onGridToggle = { isGridEnabled = !isGridEnabled }
                 )
-//                AspectRatioSelector(onAspectRatioChange = { newRatio ->
-//                    aspectRatio = newRatio
-//                })
                 MainContent(
                     lensFacing = lensFacing,
                     capturedImageUri = capturedImageUri,

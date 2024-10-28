@@ -51,6 +51,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import coil.compose.rememberAsyncImagePainter
 import com.midterm.cameraapp.data.GalleryImage
+import com.midterm.cameraapp.ui.view.EditImageScreen
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -59,11 +60,12 @@ fun GalleryScreen(
     onImageClick: (Uri) -> Unit,
     onClose: () -> Unit,
     onDeleteImage: (GalleryImage) -> Unit,
-    onEditImage: (GalleryImage) -> Unit
+    onEditImage: (GalleryImage) -> Unit,
 ) {
     var selectedImage by remember { mutableStateOf<GalleryImage?>(null) }
     var showFullscreen by remember { mutableStateOf<GalleryImage?>(null) }
     var showDeleteDialog by remember { mutableStateOf<GalleryImage?>(null) }
+    var showEditScreen by remember { mutableStateOf<GalleryImage?>(null) }
 
     // Delete Confirmation Dialog
     showDeleteDialog?.let { imageToDelete ->
@@ -95,7 +97,16 @@ fun GalleryScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        if (showFullscreen != null) {
+        if (showEditScreen != null) {
+            EditImageScreen(
+                image = showEditScreen!!,
+                onClose = { showEditScreen = null },
+                onSave = {
+                    // Implement save functionality
+                    showEditScreen = null
+                }
+            )
+        } else if (showFullscreen != null) {
             FullscreenImageScreen(
                 image = showFullscreen!!,
                 images = images,
@@ -103,9 +114,8 @@ fun GalleryScreen(
                 onDelete = {
                     showDeleteDialog = showFullscreen
                 },
-                onImageChange = { newImage ->
-                    showFullscreen = newImage
-                }
+                onImageChange = { newImage -> showFullscreen = newImage },
+                onEdit = { image -> showEditScreen = image }
             )
         } else {
             // Background Box để xử lý click ra ngoài

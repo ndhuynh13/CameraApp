@@ -69,6 +69,11 @@ dependencies {
     implementation ("androidx.camera:camera-lifecycle:1.3.4")
     // CameraX View class
     implementation ("androidx.camera:camera-view:1.3.4")
+    implementation ("com.github.bumptech.glide:glide:4.16.0")
+    annotationProcessor ("com.github.bumptech.glide:compiler:4.16.0")
+    implementation ("com.github.bumptech.glide:compose:1.0.0-beta01")
+    implementation ("jp.co.cyberagent.android:gpuimage:2.1.0")
+    implementation(libs.androidx.media3.effect)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
