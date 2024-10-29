@@ -1,5 +1,6 @@
 package com.midterm.cameraapp.ui.view
 
+import android.app.Activity
 import android.content.ContentValues
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
@@ -57,14 +58,18 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
+import com.yalantis.ucrop.UCrop
 import jp.co.cyberagent.android.gpuimage.GPUImageView
 import jp.co.cyberagent.android.gpuimage.filter.GPUImageBrightnessFilter
 import jp.co.cyberagent.android.gpuimage.filter.GPUImageContrastFilter
@@ -72,6 +77,8 @@ import jp.co.cyberagent.android.gpuimage.filter.GPUImageFilterGroup
 import jp.co.cyberagent.android.gpuimage.filter.GPUImageSaturationFilter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.File
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -83,96 +90,114 @@ fun EditImageScreen(
     var brightness by remember { mutableStateOf(0f) }
     var contrast by remember { mutableStateOf(1f) }
     var saturation by remember { mutableStateOf(1f) }
-    var rotation by remember { mutableStateOf(0f) }
     var showColorAdjust by remember { mutableStateOf(false) }
-    var showRotateOptions by remember { mutableStateOf(false) }
-    val context = LocalContext.current
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var isLoading by remember { mutableStateOf(true) }
-    var currentRotation by remember { mutableStateOf(0f) }
+    val context = LocalContext.current
     val gpuImage = remember { GPUImage(context) }
+    var isLoading by remember { mutableStateOf(true) }
 
+    // Load bitmap khi màn hình được tạo
     LaunchedEffect(image.uri) {
         isLoading = true
         try {
-            // Load ảnh từ URI
             withContext(Dispatchers.IO) {
-                val loadedBitmap =
-                    MediaStore.Images.Media.getBitmap(context.contentResolver, image.uri)
-                // Đọc orientation của ảnh
-                val orientation = getImageOrientation(context, image.uri)
-                // Xoay bitmap theo orientation nếu cần
-                bitmap = if (orientation != 0) {
-                    rotateBitmap(loadedBitmap, orientation.toFloat())
-                } else {
-                    loadedBitmap
-                }
-                gpuImage.setImage(bitmap)
+                val loadedBitmap = MediaStore.Images.Media.getBitmap(context.contentResolver, image.uri)
+                bitmap = loadedBitmap
+                gpuImage.setImage(loadedBitmap)
             }
+            isLoading = false
+            Log.d("EditImageScreen", "Bitmap loaded - Width: ${bitmap?.width}, Height: ${bitmap?.height}")
         } catch (e: Exception) {
             Log.e("EditImageScreen", "Error loading image", e)
-        } finally {
             isLoading = false
         }
     }
+    // Khởi tạo launcher cho uCrop
+    val cropLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            try {
+                val resultUri = UCrop.getOutput(result.data!!)
+                resultUri?.let { uri ->
+                    // Cập nhật bitmap mới sau khi crop
+                    val newBitmap = MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
+                    bitmap = newBitmap
+                    gpuImage.setImage(newBitmap)
+                }
+            } catch (e: Exception) {
+                Log.e("EditImageScreen", "Error getting crop result", e)
+            }
+        }
+    }
 
+    // Hàm mở uCrop
+    fun startCrop(uri: Uri) {
+        val destinationUri = Uri.fromFile(
+            File(context.cacheDir, "cropped_${System.currentTimeMillis()}.jpg")
+        )
+
+        val uCropIntent = UCrop.of(uri, destinationUri)
+            .withAspectRatio(0f, 0f) // Tự do điều chỉnh tỷ lệ
+            .withOptions(UCrop.Options().apply {
+                setToolbarColor(Color.Black.toArgb())
+                setStatusBarColor(Color.Black.toArgb())
+                setToolbarWidgetColor(Color.White.toArgb())
+                setFreeStyleCropEnabled(true)
+            })
+            .getIntent(context)
+
+        cropLauncher.launch(uCropIntent)
+    }
+
+    // UI Code
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
     ) {
-        if (isLoading) {
-            CircularProgressIndicator(
-                modifier = Modifier.align(Alignment.Center),
-                color = Color.White
-            )
-        } else {
-            Column(
-                modifier = Modifier.fillMaxSize()
-            ) {
-                // TopAppBar
-                SmallTopAppBar(
-                    title = { Text("Edit Image", color = Color.White) },
-                    navigationIcon = {
-                        IconButton(onClick = onClose) {
-                            Icon(Icons.Default.Close, "Close", tint = Color.White)
+        Column(modifier = Modifier.fillMaxSize()) {
+            // TopAppBar
+            SmallTopAppBar(
+                title = { Text("Edit Image", color = Color.White) },
+                navigationIcon = {
+                    IconButton(onClick = onClose) {
+                        Icon(Icons.Default.Close, "Close", tint = Color.White)
+                    }
+                },
+                actions = {
+                    TextButton(
+                        onClick = {
                         }
-                    },
-                    actions = {
-                        TextButton(
-                            onClick = {
-                                bitmap?.let {
-                                    try {
-                                        val editedBitmap = gpuImage.bitmapWithFilterApplied
-                                        saveBitmapToGallery(context, editedBitmap)
-                                        onSave()
-                                    } catch (e: Exception) {
-                                        Log.e("EditImageScreen", "Error applying filter", e)
-                                    }
-                                }
-                            },
-                            enabled = bitmap != null
-                        ) {
-                            Text("Save", color = Color.White)
-                        }
-                    },
-                    colors = TopAppBarDefaults.smallTopAppBarColors(
-                        containerColor = Color.Black.copy(alpha = 0.7f)
-                    )
+                    ) {
+                        Text("Save", color = Color.White)
+                    }
+                },
+                colors = TopAppBarDefaults.smallTopAppBarColors(
+                    containerColor = Color.Black.copy(alpha = 0.7f)
                 )
+            )
 
-                // Image Preview
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                ) {
+            // Image Preview
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .background(Color.Black)
+            ) {
+                if (isLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.align(Alignment.Center),
+                        color = Color.White
+                    )
+                } else {
                     bitmap?.let { bmp ->
                         AndroidView(
                             factory = { context ->
                                 GPUImageView(context).apply {
                                     setScaleType(GPUImage.ScaleType.CENTER_INSIDE)
                                     setImage(bmp)
+                                    Log.d("EditImageScreen", "GPUImageView created and image set")
                                 }
                             },
                             modifier = Modifier.fillMaxSize(),
@@ -184,129 +209,47 @@ fun EditImageScreen(
                                     addFilter(GPUImageSaturationFilter(saturation))
                                 }
                                 view.filter = filterGroup
+                                view.requestRender()
+                                Log.d("EditImageScreen", "GPUImageView updated with filters")
                             }
+                        )
+                    } ?: run {
+                        Log.e("EditImageScreen", "Bitmap is null")
+                        Text(
+                            "No image available",
+                            color = Color.White,
+                            modifier = Modifier.align(Alignment.Center)
                         )
                     }
                 }
+            }
 
-                // Bottom Controls
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    color = Color(0xFF2A2A2A)
-                ) {
-                    Column {
-                        // Trong EditImageScreen, phần Row chứa các buttons
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            horizontalArrangement = Arrangement.SpaceEvenly
-                        ) {
-                            EditButton(
-                                icon = painterResource(id = R.drawable.crop),
-                                label = "Rotate",
-                                onClick = {
-                                    showRotateOptions = !showRotateOptions
-                                    if (showRotateOptions) {
-                                        showColorAdjust = false
-                                    }
-                                }
-                            )
-                            EditButton(
-                                icon = painterResource(id = R.drawable.adjust_color),
-                                label = "Adjust",
-                                onClick = {
-                                    showColorAdjust = !showColorAdjust
-                                    if (showColorAdjust) {
-                                        showRotateOptions = false
-                                    }
-                                }
-                            )
-                        }
-
-                        // Rotate Options
-                        AnimatedVisibility(
-                            visible = showRotateOptions,
-                            enter = fadeIn() + expandVertically(),
-                            exit = fadeOut() + shrinkVertically()
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(16.dp),
-                                horizontalArrangement = Arrangement.SpaceEvenly
-                            ) {
-                                IconButton(
-                                    onClick = {
-                                        Log.d("EditImageScreen", "Rotate Left Button Clicked")
-                                        bitmap?.let { bmp ->
-                                            Log.d("EditImageScreen", "Current rotation: $currentRotation")
-                                            Log.d("EditImageScreen", "Original bitmap - Width: ${bmp.width}, Height: ${bmp.height}")
-
-                                            currentRotation = (currentRotation - 90) % 360
-                                            Log.d("EditImageScreen", "New rotation value: $currentRotation")
-
-                                            try {
-                                                val rotatedBitmap = rotateBitmap(bmp, -90f)
-                                                Log.d("EditImageScreen", "Rotated bitmap - Width: ${rotatedBitmap.width}, Height: ${rotatedBitmap.height}")
-
-                                                bitmap = rotatedBitmap
-                                                Log.d("EditImageScreen", "New bitmap set")
-
-                                                gpuImage.setImage(rotatedBitmap)
-                                                Log.d("EditImageScreen", "GPUImage updated with new bitmap")
-
-                                                gpuImage.requestRender()
-                                                Log.d("EditImageScreen", "Render requested")
-                                            } catch (e: Exception) {
-                                                Log.e("EditImageScreen", "Error during rotation", e)
-                                            }
-                                        } ?: Log.e("EditImageScreen", "Bitmap is null")
-                                    }
-                                ) {
-                                    Icon(
-                                        painter = painterResource(id = R.drawable.rotate_left),
-                                        contentDescription = "Rotate Left",
-                                        tint = Color.White
-                                    )
-                                }
-
-                                IconButton(
-                                    onClick = {
-                                        Log.d("EditImageScreen", "Rotate Right Button Clicked")
-                                        bitmap?.let { bmp ->
-                                            Log.d("EditImageScreen", "Current rotation: $currentRotation")
-                                            Log.d("EditImageScreen", "Original bitmap - Width: ${bmp.width}, Height: ${bmp.height}")
-
-                                            currentRotation = (currentRotation + 90) % 360
-                                            Log.d("EditImageScreen", "New rotation value: $currentRotation")
-
-                                            try {
-                                                val rotatedBitmap = rotateBitmap(bmp, 90f)
-                                                Log.d("EditImageScreen", "Rotated bitmap - Width: ${rotatedBitmap.width}, Height: ${rotatedBitmap.height}")
-
-                                                bitmap = rotatedBitmap
-                                                Log.d("EditImageScreen", "New bitmap set")
-
-                                                gpuImage.setImage(rotatedBitmap)
-                                                Log.d("EditImageScreen", "GPUImage updated with new bitmap")
-
-                                                gpuImage.requestRender()
-                                                Log.d("EditImageScreen", "Render requested")
-                                            } catch (e: Exception) {
-                                                Log.e("EditImageScreen", "Error during rotation", e)
-                                            }
-                                        } ?: Log.e("EditImageScreen", "Bitmap is null")
-                                    }
-                                ) {
-                                    Icon(
-                                        painter = painterResource(id = R.drawable.rotate_right),
-                                        contentDescription = "Rotate Right",
-                                        tint = Color.White
-                                    )
-                                }
+            // Bottom Controls
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = Color(0xFF2A2A2A)
+            ) {
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        EditButton(
+                            icon = painterResource(id = R.drawable.crop),
+                            label = "Crop",
+                            onClick = {
+                                image.uri?.let { startCrop(it) }
                             }
-                        }
+                        )
+                        EditButton(
+                            icon = painterResource(id = R.drawable.adjust_color),
+                            label = "Adjust",
+                            onClick = {
+                                showColorAdjust = !showColorAdjust
+                            }
+                        )
                     }
 
                     // Color Adjust Controls
@@ -315,47 +258,14 @@ fun EditImageScreen(
                         enter = fadeIn() + expandVertically(),
                         exit = fadeOut() + shrinkVertically()
                     ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Text("Brightness", color = Color.White)
-                            Slider(
-                                value = brightness,
-                                onValueChange = { brightness = it },
-                                valueRange = -1f..1f,
-                                colors = SliderDefaults.colors(
-                                    thumbColor = Color.White,
-                                    activeTrackColor = Color.White,
-                                    inactiveTrackColor = Color.Gray
-                                )
-                            )
-
-                            Spacer(modifier = Modifier.height(16.dp))
-
-                            Text("Contrast", color = Color.White)
-                            Slider(
-                                value = contrast,
-                                onValueChange = { contrast = it },
-                                valueRange = 0.5f..2f,
-                                colors = SliderDefaults.colors(
-                                    thumbColor = Color.White,
-                                    activeTrackColor = Color.White,
-                                    inactiveTrackColor = Color.Gray
-                                )
-                            )
-
-                            Spacer(modifier = Modifier.height(16.dp))
-
-                            Text("Saturation", color = Color.White)
-                            Slider(
-                                value = saturation,
-                                onValueChange = { saturation = it },
-                                valueRange = 0f..2f,
-                                colors = SliderDefaults.colors(
-                                    thumbColor = Color.White,
-                                    activeTrackColor = Color.White,
-                                    inactiveTrackColor = Color.Gray
-                                )
-                            )
-                        }
+                        ColorAdjustControls(
+                            brightness = brightness,
+                            contrast = contrast,
+                            saturation = saturation,
+                            onBrightnessChange = { brightness = it },
+                            onContrastChange = { contrast = it },
+                            onSaturationChange = { saturation = it }
+                        )
                     }
                 }
             }
@@ -379,48 +289,6 @@ private fun getImageOrientation(context: Context, uri: Uri): Int {
             0
         }
     } ?: 0
-}
-
-// Trong hàm rotateBitmap
-private fun rotateBitmap(bitmap: Bitmap, degrees: Float): Bitmap {
-    Log.d("EditImageScreen", "rotateBitmap called with degrees: $degrees")
-    Log.d("EditImageScreen", "Input bitmap - Width: ${bitmap.width}, Height: ${bitmap.height}")
-
-    val matrix = Matrix().apply {
-        postRotate(degrees)
-    }
-
-    return try {
-        val startTime = System.currentTimeMillis()
-        Log.d("EditImageScreen", "Starting bitmap rotation")
-
-        val rotatedBitmap = Bitmap.createBitmap(
-            bitmap,
-            0,
-            0,
-            bitmap.width,
-            bitmap.height,
-            matrix,
-            true
-        )
-
-        val endTime = System.currentTimeMillis()
-        Log.d("EditImageScreen", "Rotation completed in ${endTime - startTime}ms")
-        Log.d("EditImageScreen", "Output bitmap - Width: ${rotatedBitmap.width}, Height: ${rotatedBitmap.height}")
-
-        if (rotatedBitmap != bitmap) {
-            Log.d("EditImageScreen", "Recycling old bitmap")
-            bitmap.recycle()
-        }
-
-        rotatedBitmap
-    } catch (e: OutOfMemoryError) {
-        Log.e("EditImageScreen", "OutOfMemoryError during rotation", e)
-        bitmap
-    } catch (e: Exception) {
-        Log.e("EditImageScreen", "Error during rotation", e)
-        bitmap
-    }
 }
 
 @Composable
