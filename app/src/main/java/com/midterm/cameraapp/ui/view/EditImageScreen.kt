@@ -101,14 +101,28 @@ fun EditImageScreen(
         isLoading = true
         try {
             withContext(Dispatchers.IO) {
-                val loadedBitmap = MediaStore.Images.Media.getBitmap(context.contentResolver, image.uri)
+                // Load bitmap từ URI
+                var loadedBitmap = MediaStore.Images.Media.getBitmap(context.contentResolver, image.uri)
+
+                // Lấy orientation của ảnh
+                val orientation = getImageOrientation(context, image.uri)
+
+                // Kiểm tra orientation và xoay bitmap nếu cần
+                if (orientation != 0) {
+                    val matrix = Matrix().apply { postRotate(orientation.toFloat()) }
+                    loadedBitmap = Bitmap.createBitmap(
+                        loadedBitmap, 0, 0,
+                        loadedBitmap.width, loadedBitmap.height,
+                        matrix, true
+                    )
+                }
+
                 bitmap = loadedBitmap
                 gpuImage.setImage(loadedBitmap)
             }
-            isLoading = false
-            Log.d("EditImageScreen", "Bitmap loaded - Width: ${bitmap?.width}, Height: ${bitmap?.height}")
         } catch (e: Exception) {
             Log.e("EditImageScreen", "Error loading image", e)
+        } finally {
             isLoading = false
         }
     }
@@ -183,7 +197,6 @@ fun EditImageScreen(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .background(Color.Black)
             ) {
                 if (isLoading) {
                     CircularProgressIndicator(
@@ -191,35 +204,40 @@ fun EditImageScreen(
                         color = Color.White
                     )
                 } else {
-                    bitmap?.let { bmp ->
-                        AndroidView(
-                            factory = { context ->
-                                GPUImageView(context).apply {
-                                    setScaleType(GPUImage.ScaleType.CENTER_INSIDE)
-                                    setImage(bmp)
-                                    Log.d("EditImageScreen", "GPUImageView created and image set")
-                                }
-                            },
+                    // Chỉ hiển thị AsyncImage, không cần GPUImageView khi chưa edit
+                    if (!showColorAdjust) {
+                        AsyncImage(
+                            model = ImageRequest.Builder(LocalContext.current)
+                                .data(image.uri)
+                                .crossfade(true)
+                                .build(),
+                            contentDescription = "Image Preview",
                             modifier = Modifier.fillMaxSize(),
-                            update = { view ->
-                                view.setImage(bmp)
-                                val filterGroup = GPUImageFilterGroup().apply {
-                                    addFilter(GPUImageBrightnessFilter(brightness))
-                                    addFilter(GPUImageContrastFilter(contrast))
-                                    addFilter(GPUImageSaturationFilter(saturation))
+                            contentScale = ContentScale.Fit
+                        )
+                    } else {
+                        // Chỉ hiển thị GPUImageView khi đang adjust
+                        bitmap?.let { bmp ->
+                            AndroidView(
+                                factory = { context ->
+                                    GPUImageView(context).apply {
+                                        setScaleType(GPUImage.ScaleType.CENTER_INSIDE)
+                                        setImage(bmp)
+                                        setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                                    }
+                                },
+                                modifier = Modifier.fillMaxSize(),
+                                update = { view ->
+                                    view.setImage(bmp)
+                                    val filterGroup = GPUImageFilterGroup().apply {
+                                        addFilter(GPUImageBrightnessFilter(brightness))
+                                        addFilter(GPUImageContrastFilter(contrast))
+                                        addFilter(GPUImageSaturationFilter(saturation))
+                                    }
+                                    view.filter = filterGroup
                                 }
-                                view.filter = filterGroup
-                                view.requestRender()
-                                Log.d("EditImageScreen", "GPUImageView updated with filters")
-                            }
-                        )
-                    } ?: run {
-                        Log.e("EditImageScreen", "Bitmap is null")
-                        Text(
-                            "No image available",
-                            color = Color.White,
-                            modifier = Modifier.align(Alignment.Center)
-                        )
+                            )
+                        }
                     }
                 }
             }
