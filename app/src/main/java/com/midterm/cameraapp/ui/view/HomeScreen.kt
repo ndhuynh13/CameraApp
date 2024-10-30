@@ -76,7 +76,13 @@ fun CameraScreen(
 ) {
     var lensFacing by remember { mutableStateOf(CameraSelector.LENS_FACING_BACK) }
     var capturedImageUri by remember { mutableStateOf<Uri?>(null) }
-    val imageCapture = remember { ImageCapture.Builder().build() }
+    var imageCapture by remember {
+        mutableStateOf(
+            ImageCapture.Builder()
+                .setTargetAspectRatio(AspectRatio.RATIO_4_3)
+                .build()
+        )
+    }
     var isCameraReady by remember { mutableStateOf(true) }
     var cameraProvider: ProcessCameraProvider? = null
     var isFlashEnabled by remember { mutableStateOf(false) }
@@ -140,7 +146,8 @@ fun CameraScreen(
                 cameraProvider = cameraProvider,
                 aspectRatio = aspectRatio,
                 isGridEnabled = isGridEnabled,
-                modifier = Modifier.fillMaxSize() // Full screen
+                modifier = Modifier.fillMaxSize(),
+                isFlashEnabled = isFlashEnabled// Full screen
             )
 
             // 2. UI Controls (layer trên cùng)
@@ -154,13 +161,15 @@ fun CameraScreen(
                     isFlashEnabled = isFlashEnabled,
                     onFlashToggle = { isFlashEnabled = !isFlashEnabled },
                     onAspectRatioSelected = { ratio ->
-                        // Chuyển đổi String thành Int
-                        aspectRatio = when (ratio) {
+                        val newAspectRatio = when (ratio) {
                             "16:9" -> AspectRatio.RATIO_16_9
                             "4:3" -> AspectRatio.RATIO_4_3
-                            "1:1" -> 0 // Giá trị cho tỷ lệ 1:1
-                            else -> AspectRatio.RATIO_16_9 // Giá trị mặc định
+                            "1:1" -> 0
+                            else -> AspectRatio.RATIO_16_9
                         }
+                        Log.d("AspectRatioChange", "Selected ratio: $ratio, value: $newAspectRatio")
+                        aspectRatio = newAspectRatio
+                        imageCapture = updateImageCaptureConfig(newAspectRatio, imageCapture)
                     },
                     isGridEnabled = isGridEnabled,
                     onGridToggle = { isGridEnabled = !isGridEnabled },
@@ -213,17 +222,21 @@ fun MainContent(
     cameraProvider: ProcessCameraProvider?,
     aspectRatio: Int, // Nhận aspectRatio từ CameraScreen
     isGridEnabled: Boolean,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isFlashEnabled: Boolean, // Thêm tham số nà
 ) {
+    // Log để debug
+    Log.d("AspectRatio", "Current aspect ratio: $aspectRatio")
+
     Box(
         modifier = modifier
             .fillMaxWidth()
             .aspectRatio(
                 when (aspectRatio) {
-                    0 -> 1f // Tỷ lệ 1:1
-                    AspectRatio.RATIO_16_9 -> 9f / 16f // Tỷ lệ 16:9
-                    AspectRatio.RATIO_4_3 -> 3f / 4f // Tỷ lệ 4:3
-                    else -> 3f / 4f // Mặc định là 4:3 nếu có lỗi
+                    AspectRatio.RATIO_16_9 -> 9f / 16f
+                    AspectRatio.RATIO_4_3 -> 3f / 4f  // Sửa lại từ 3f/4f thành 4f/3f
+                    0 -> 1f // 1:1
+                    else -> 3f / 4f // Mặc định là 4:3
                 }
             )
             .clip(RoundedCornerShape(20.dp))
@@ -242,7 +255,8 @@ fun MainContent(
                 imageCapture = imageCapture,
                 onCameraReady = onCameraReady,
                 cameraProvider = cameraProvider,
-                aspectRatio = aspectRatio // Truyền aspectRatio vào CameraPreview
+                aspectRatio = aspectRatio,
+                isFlashEnabled = isFlashEnabled
             )
             // Show Grid
             if (isGridEnabled) {
@@ -260,7 +274,8 @@ fun CameraPreview(
     imageCapture: ImageCapture,
     onCameraReady: () -> Unit,
     cameraProvider: ProcessCameraProvider?,
-    aspectRatio: Int // Nhận aspectRatio
+    aspectRatio: Int,
+    isFlashEnabled: Boolean
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -281,7 +296,15 @@ fun CameraPreview(
             cameraProviderFuture.addListener({
                 val cameraProvider: ProcessCameraProvider = cameraProviderFuture.get()
                 cameraProvider.unbindAll()
-                bindPreview(cameraProvider, previewView, lifecycleOwner, lensFacing, imageCapture, aspectRatio)
+                bindPreview(
+                    cameraProvider,
+                    previewView,
+                    lifecycleOwner,
+                    lensFacing,
+                    imageCapture,
+                    aspectRatio,
+                    isFlashEnabled
+                )
                 onCameraReady()
             }, ContextCompat.getMainExecutor(context))
         }
@@ -294,15 +317,24 @@ fun bindPreview(
     lifecycleOwner: LifecycleOwner,
     lensFacing: Int,
     imageCapture: ImageCapture,
-    aspectRatio: Int
+    aspectRatio: Int,
+    isFlashEnabled: Boolean
 ) {
     val previewBuilder = Preview.Builder()
-    if (aspectRatio == 0) {
-        // Thiết lập tỷ lệ 1:1
-        previewBuilder.setTargetResolution(Size(1080, 1080)) // Kích thước 1:1
-    } else {
-        // Thiết lập tỷ lệ mặc định 4:3 hoặc 16:9
-        previewBuilder.setTargetAspectRatio(aspectRatio)
+
+    when (aspectRatio) {
+        AspectRatio.RATIO_16_9 -> {
+            previewBuilder.setTargetAspectRatio(AspectRatio.RATIO_16_9)
+            Log.d("Preview", "Setting preview ratio to 16:9")
+        }
+        AspectRatio.RATIO_4_3 -> {
+            previewBuilder.setTargetAspectRatio(AspectRatio.RATIO_4_3)
+            Log.d("Preview", "Setting preview ratio to 4:3")
+        }
+        0 -> { // 1:1
+            previewBuilder.setTargetResolution(Size(1080, 1080))
+            Log.d("Preview", "Setting preview ratio to 1:1")
+        }
     }
 
     val preview = previewBuilder.build().also {
@@ -314,6 +346,12 @@ fun bindPreview(
         .requireLensFacing(lensFacing)
         .build()
 
+    // Cập nhật cấu hình flash cho imageCapture
+    imageCapture.flashMode = when (isFlashEnabled) {
+        true -> ImageCapture.FLASH_MODE_ON
+        false -> ImageCapture.FLASH_MODE_OFF
+    }
+
     try {
         // Unbind mọi phiên camera trước khi bind phiên mới
         cameraProvider.unbindAll()
@@ -324,6 +362,14 @@ fun bindPreview(
             preview,
             imageCapture
         )
+
+        // Kiểm tra xem thiết bị có hỗ trợ flash không
+        val hasFlash = camera.cameraInfo.hasFlashUnit()
+        Log.d("CameraFlash", "Device has flash unit: $hasFlash")
+
+        if (hasFlash) {
+            camera.cameraControl.enableTorch(isFlashEnabled)
+        }
 
         // Kiểm tra trạng thái của camera sau khi bind
         val cameraInfo = camera.cameraInfo
@@ -566,7 +612,7 @@ fun UITopBar(
     modifier: Modifier = Modifier
 ) {
     var expanded by remember { mutableStateOf(false) }
-    var selectedRatio by remember { mutableStateOf("16:9") }
+    var selectedRatio by remember { mutableStateOf("4:3") }
 
     Box(
         modifier = modifier.fillMaxWidth()
@@ -688,4 +734,26 @@ private fun AspectRatioItem(
             fontWeight = if (ratio == selectedRatio) FontWeight.Bold else FontWeight.Normal
         )
     }
+}
+
+// Hàm cập nhật ImageCapture khi thay đổi tỷ lệ
+fun updateImageCaptureConfig(newAspectRatio: Int, currentImageCapture: ImageCapture): ImageCapture {
+    val builder = ImageCapture.Builder()
+
+    when (newAspectRatio) {
+        AspectRatio.RATIO_16_9 -> {
+            builder.setTargetAspectRatio(AspectRatio.RATIO_16_9)
+            Log.d("ImageCapture", "Setting ratio to 16:9")
+        }
+        AspectRatio.RATIO_4_3 -> {
+            builder.setTargetAspectRatio(AspectRatio.RATIO_4_3)
+            Log.d("ImageCapture", "Setting ratio to 4:3")
+        }
+        0 -> { // 1:1
+            builder.setTargetResolution(Size(1080, 1080))
+            Log.d("ImageCapture", "Setting ratio to 1:1")
+        }
+    }
+
+    return builder.build()
 }
