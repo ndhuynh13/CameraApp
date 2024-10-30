@@ -66,6 +66,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
@@ -76,6 +77,7 @@ import jp.co.cyberagent.android.gpuimage.filter.GPUImageContrastFilter
 import jp.co.cyberagent.android.gpuimage.filter.GPUImageFilterGroup
 import jp.co.cyberagent.android.gpuimage.filter.GPUImageSaturationFilter
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -85,7 +87,7 @@ import java.io.File
 fun EditImageScreen(
     image: GalleryImage,
     onClose: () -> Unit,
-    onSave: () -> Unit
+    onSave: suspend () -> Unit
 ) {
     var brightness by remember { mutableStateOf(0f) }
     var contrast by remember { mutableStateOf(1f) }
@@ -95,6 +97,10 @@ fun EditImageScreen(
     val context = LocalContext.current
     val gpuImage = remember { GPUImage(context) }
     var isLoading by remember { mutableStateOf(true) }
+    val scope = rememberCoroutineScope()
+
+    // Thêm state để theo dõi ảnh preview
+    var previewUri by remember { mutableStateOf<Uri?>(image.uri) }
 
     // Load bitmap khi màn hình được tạo
     LaunchedEffect(image.uri) {
@@ -126,7 +132,7 @@ fun EditImageScreen(
             isLoading = false
         }
     }
-    // Khởi tạo launcher cho uCrop
+    // Cập nhật cropLauncher để update preview
     val cropLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -138,6 +144,8 @@ fun EditImageScreen(
                     val newBitmap = MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
                     bitmap = newBitmap
                     gpuImage.setImage(newBitmap)
+                    // Cập nhật preview URI
+                    previewUri = uri
                 }
             } catch (e: Exception) {
                 Log.e("EditImageScreen", "Error getting crop result", e)
@@ -164,6 +172,41 @@ fun EditImageScreen(
         cropLauncher.launch(uCropIntent)
     }
 
+    // Cập nhật hàm saveCurrentImage để lưu và cập nhật preview
+    fun saveCurrentImage() {
+        bitmap?.let { currentBitmap ->
+            scope.launch(Dispatchers.IO) {
+                try {
+                    val savedUri = if (showColorAdjust) {
+                        // Nếu đang adjust color, lấy bitmap đã chỉnh sửa từ GPUImage
+                        val filterGroup = GPUImageFilterGroup().apply {
+                            addFilter(GPUImageBrightnessFilter(brightness))
+                            addFilter(GPUImageContrastFilter(contrast))
+                            addFilter(GPUImageSaturationFilter(saturation))
+                        }
+                        gpuImage.setImage(currentBitmap)
+                        gpuImage.setFilter(filterGroup)
+                        val editedBitmap = gpuImage.bitmapWithFilterApplied
+                        saveBitmapToGallery(context, editedBitmap)
+                    } else {
+                        // Nếu chỉ crop hoặc không chỉnh sửa, lưu bitmap hiện tại
+                        saveBitmapToGallery(context, currentBitmap)
+                    }
+
+                    // Cập nhật preview URI sau khi lưu
+                    withContext(Dispatchers.Main) {
+                        savedUri?.let {
+                            previewUri = it
+                        }
+                        onSave()
+                    }
+                } catch (e: Exception) {
+                    Log.e("EditImageScreen", "Error saving image", e)
+                }
+            }
+        }
+    }
+
     // UI Code
     Box(
         modifier = Modifier
@@ -181,8 +224,7 @@ fun EditImageScreen(
                 },
                 actions = {
                     TextButton(
-                        onClick = {
-                        }
+                        onClick = { saveCurrentImage() }
                     ) {
                         Text("Save", color = Color.White)
                     }
@@ -204,19 +246,8 @@ fun EditImageScreen(
                         color = Color.White
                     )
                 } else {
-                    // Chỉ hiển thị AsyncImage, không cần GPUImageView khi chưa edit
-                    if (!showColorAdjust) {
-                        AsyncImage(
-                            model = ImageRequest.Builder(LocalContext.current)
-                                .data(image.uri)
-                                .crossfade(true)
-                                .build(),
-                            contentDescription = "Image Preview",
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Fit
-                        )
-                    } else {
-                        // Chỉ hiển thị GPUImageView khi đang adjust
+                    if (showColorAdjust) {
+                        // Hiển thị GPUImageView khi đang adjust color
                         bitmap?.let { bmp ->
                             AndroidView(
                                 factory = { context ->
@@ -238,6 +269,17 @@ fun EditImageScreen(
                                 }
                             )
                         }
+                    } else {
+                        // Hiển thị ảnh thường hoặc ảnh đã crop
+                        AsyncImage(
+                            model = ImageRequest.Builder(LocalContext.current)
+                                .data(previewUri)
+                                .crossfade(true)
+                                .build(),
+                            contentDescription = "Image Preview",
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Fit
+                        )
                     }
                 }
             }
@@ -382,22 +424,30 @@ private fun ColorAdjustControls(
     }
 }
 
-// Hàm hỗ trợ lưu ảnh
-private fun saveBitmapToGallery(context: Context, bitmap: Bitmap) {
-    val filename = "edited_${System.currentTimeMillis()}.jpg"
-    val contentValues = ContentValues().apply {
-        put(MediaStore.Images.Media.DISPLAY_NAME, filename)
-        put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES)
-        }
-    }
+// Cập nhật hàm saveBitmapToGallery để trả về Uri của ảnh đã lưu
+private suspend fun saveBitmapToGallery(context: Context, bitmap: Bitmap): Uri? {
+    return withContext(Dispatchers.IO) {
+        try {
+            val filename = "edited_${System.currentTimeMillis()}.jpg"
+            val contentValues = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, filename)
+                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                put(MediaStore.Images.Media.DATE_ADDED, System.currentTimeMillis() / 1000)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES)
+                }
+            }
 
-    val uri =
-        context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
-    uri?.let {
-        context.contentResolver.openOutputStream(it)?.use { stream ->
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 100, stream)
+            val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+            uri?.let {
+                context.contentResolver.openOutputStream(it)?.use { stream ->
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, 100, stream)
+                }
+                uri
+            }
+        } catch (e: Exception) {
+            Log.e("SaveImage", "Error saving image", e)
+            null
         }
     }
 }

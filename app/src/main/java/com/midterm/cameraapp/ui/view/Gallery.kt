@@ -73,6 +73,11 @@ fun GalleryScreen(
 
     val scope = rememberCoroutineScope()
 
+    // Sắp xếp lại danh sách ảnh theo thời gian mới nhất
+    val sortedImages = remember(images) {
+        images.sortedByDescending { it.dateAdded }
+    }
+
     // Sử dụng coroutine scope để gọi suspend function
     LaunchedEffect(Unit) {
         scope.launch {
@@ -116,6 +121,9 @@ fun GalleryScreen(
                 onSave = {
                     // Implement save functionality
                     showEditScreen = null
+                    scope.launch {
+                        onReload() // Reload gallery sau khi save
+                    }
                 }
             )
         } else if (showFullscreen != null) {
@@ -164,7 +172,7 @@ fun GalleryScreen(
                         contentPadding = PaddingValues(4.dp),
                         modifier = Modifier.clickable(enabled = false) {} // Ngăn chặn click event từ parent
                     ) {
-                        items(images) { image ->
+                        items(sortedImages) { image ->
                             GalleryItem(
                                 image = image,
                                 onImageClick = { showFullscreen = image },
