@@ -96,6 +96,11 @@ fun CameraScreen(
         }
     }
 
+    // Định nghĩa reloadGallery như một suspend function
+    val reloadGallery: suspend () -> Unit = {
+        images = imageGallery.loadImages(context)
+    }
+
     if (showGallery) {
         GalleryScreen(
             images = images,
@@ -111,22 +116,40 @@ fun CameraScreen(
                         null,
                         null
                     )
-                    // Reload danh sách ảnh
-                    images = imageGallery.loadImages(context)
+                    reloadGallery() // Gọi trong coroutine scope
                 }
             },
             onEditImage = { image ->
-                // Xử lý chỉnh sửa ảnh
-                // Có thể navigate đến màn hình edit hoặc mở intent để edit
-            }
+                // Handle edit
+            },
+            onReload = reloadGallery // Truyền suspend function
         )
     } else {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color(0xFF22272E))
+                .background(Color.Black)
         ) {
-            Column {
+            // 1. Camera Preview (layer dưới cùng)
+            MainContent(
+                lensFacing = lensFacing,
+                capturedImageUri = capturedImageUri,
+                onCaptureImage = { uri -> capturedImageUri = uri },
+                imageCapture = imageCapture,
+                onCameraReady = { isCameraReady = true },
+                cameraProvider = cameraProvider,
+                aspectRatio = aspectRatio,
+                isGridEnabled = isGridEnabled,
+                modifier = Modifier.fillMaxSize() // Full screen
+            )
+
+            // 2. UI Controls (layer trên cùng)
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp)
+            ) {
+                // Top Controls
                 UITopBar(
                     isFlashEnabled = isFlashEnabled,
                     onFlashToggle = { isFlashEnabled = !isFlashEnabled },
@@ -140,20 +163,11 @@ fun CameraScreen(
                         }
                     },
                     isGridEnabled = isGridEnabled,
-                    onGridToggle = { isGridEnabled = !isGridEnabled }
-                )
-                MainContent(
-                    lensFacing = lensFacing,
-                    capturedImageUri = capturedImageUri,
-                    onCaptureImage = { uri -> capturedImageUri = uri },
-                    imageCapture = imageCapture,
-                    onCameraReady = { isCameraReady = true },
-                    cameraProvider = cameraProvider,
-                    aspectRatio = aspectRatio, // Truyền aspectRatio vào MainContent
-                    isGridEnabled = isGridEnabled // Truyền isGridEnabled vào MainContent
+                    onGridToggle = { isGridEnabled = !isGridEnabled },
+                    modifier = Modifier.align(Alignment.TopCenter)
                 )
 
-                Spacer(modifier = Modifier.weight(1f))
+                // Bottom Controls
                 BottomBar(
                     onSwitchCamera = {
                         isCameraReady = false
@@ -177,7 +191,13 @@ fun CameraScreen(
                     onFlashToggle = { isFlashEnabled = !isFlashEnabled },
                     cameraProvider = cameraProvider,
                     latestImage = images.firstOrNull(),
-                    onGalleryClick = { showGallery = true }
+                    onGalleryClick = { showGallery = true },
+                    onImageSaved = {
+                        scope.launch {
+                            reloadGallery()
+                        }
+                    },
+                    modifier = Modifier.align(Alignment.BottomCenter)
                 )
             }
         }
@@ -192,10 +212,11 @@ fun MainContent(
     onCameraReady: () -> Unit,
     cameraProvider: ProcessCameraProvider?,
     aspectRatio: Int, // Nhận aspectRatio từ CameraScreen
-    isGridEnabled: Boolean
+    isGridEnabled: Boolean,
+    modifier: Modifier = Modifier
 ) {
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .aspectRatio(
                 when (aspectRatio) {
@@ -348,7 +369,9 @@ fun BottomBar(
     onFlashToggle: () -> Unit,
     cameraProvider: ProcessCameraProvider?,
     latestImage: GalleryImage?,
-    onGalleryClick: () -> Unit
+    onGalleryClick: () -> Unit,
+    onImageSaved: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val mainExecutor = ContextCompat.getMainExecutor(context)
@@ -358,11 +381,9 @@ fun BottomBar(
     var tempPhotoFile: File? by remember { mutableStateOf(null) }
 
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .padding(16.dp)
-            .background(Color(0xFF22272E))
-            .blur(0.dp),
+            .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Row(
@@ -377,24 +398,36 @@ fun BottomBar(
                         val contentValues = ContentValues().apply {
                             put(MediaStore.MediaColumns.DISPLAY_NAME, "IMG_${System.currentTimeMillis()}.jpg")
                             put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-                            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES) // Đặt thư mục vào thư viện ảnh
+                            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES)
                         }
 
-                        // Lưu ảnh vào MediaStore
-                        val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
-                        uri?.let {
-                            context.contentResolver.openOutputStream(uri).use { outputStream ->
-                                file.inputStream().use { inputStream ->
-                                    inputStream.copyTo(outputStream!!)
+                        scope.launch {
+                            try {
+                                // Lưu ảnh vào MediaStore
+                                val uri = context.contentResolver.insert(
+                                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                                    contentValues
+                                )
+                                uri?.let {
+                                    context.contentResolver.openOutputStream(uri).use { outputStream ->
+                                        file.inputStream().use { inputStream ->
+                                            inputStream.copyTo(outputStream!!)
+                                        }
+                                    }
+                                    onCaptureImage(uri)
                                 }
-                            }
-                            onCaptureImage(uri) // Lưu URI ảnh vào trạng thái
-                        }
 
-                        // Đặt lại trạng thái
-                        isShotTaken = false
-                        tempPhotoFile = null
-                        onCaptureImage(null)
+                                // Reload gallery ngay sau khi lưu ảnh
+                                onImageSaved()
+
+                                // Reset states
+                                isShotTaken = false
+                                tempPhotoFile = null
+                                onCaptureImage(null)
+                            } catch (e: Exception) {
+                                Log.e("SaveImage", "Error saving image", e)
+                            }
+                        }
                     }
                 }, modifier = Modifier.size(60.dp)) {
                     Icon(
@@ -465,9 +498,9 @@ fun BottomBar(
                     .size(100.dp)
             ) {
                 Icon(
-                    painter = painterResource(id = R.drawable.rec),
+                    painter = painterResource(id = R.drawable.shot),
                     contentDescription = "Shot",
-                    tint = Color(0xFF4383DC),
+                    tint = Color(0xFF7A3030),
                     modifier = Modifier.size(100.dp)
                 )
             }
@@ -529,21 +562,21 @@ fun UITopBar(
     onFlashToggle: () -> Unit,
     onAspectRatioSelected: (String) -> Unit,
     isGridEnabled: Boolean,
-    onGridToggle: () -> Unit
+    onGridToggle: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     var expanded by remember { mutableStateOf(false) }
     var selectedRatio by remember { mutableStateOf("16:9") }
 
     Box(
-        modifier = Modifier.fillMaxWidth()
+        modifier = modifier.fillMaxWidth()
     ) {
         // Main TopBar content
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(Color.Black.copy(alpha = 0.7f))
                 .padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
             // Flash Toggle Button

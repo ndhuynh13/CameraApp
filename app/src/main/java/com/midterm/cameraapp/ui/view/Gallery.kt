@@ -38,9 +38,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import coil.compose.rememberAsyncImagePainter
 import com.midterm.cameraapp.data.GalleryImage
 import com.midterm.cameraapp.ui.view.EditImageScreen
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -61,12 +64,21 @@ fun GalleryScreen(
     onClose: () -> Unit,
     onDeleteImage: (GalleryImage) -> Unit,
     onEditImage: (GalleryImage) -> Unit,
+    onReload: suspend () -> Unit
 ) {
     var selectedImage by remember { mutableStateOf<GalleryImage?>(null) }
     var showFullscreen by remember { mutableStateOf<GalleryImage?>(null) }
     var showDeleteDialog by remember { mutableStateOf<GalleryImage?>(null) }
     var showEditScreen by remember { mutableStateOf<GalleryImage?>(null) }
 
+    val scope = rememberCoroutineScope()
+
+    // Sử dụng coroutine scope để gọi suspend function
+    LaunchedEffect(Unit) {
+        scope.launch {
+            onReload()
+        }
+    }
     // Delete Confirmation Dialog
     showDeleteDialog?.let { imageToDelete ->
         AlertDialog(
