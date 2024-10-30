@@ -64,18 +64,26 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.yalantis.ucrop.UCrop
 import jp.co.cyberagent.android.gpuimage.GPUImageView
 import jp.co.cyberagent.android.gpuimage.filter.GPUImageBrightnessFilter
 import jp.co.cyberagent.android.gpuimage.filter.GPUImageContrastFilter
+import jp.co.cyberagent.android.gpuimage.filter.GPUImageExposureFilter
 import jp.co.cyberagent.android.gpuimage.filter.GPUImageFilterGroup
 import jp.co.cyberagent.android.gpuimage.filter.GPUImageSaturationFilter
+import jp.co.cyberagent.android.gpuimage.filter.GPUImageSharpenFilter
+import jp.co.cyberagent.android.gpuimage.filter.GPUImageWhiteBalanceFilter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -92,6 +100,9 @@ fun EditImageScreen(
     var brightness by remember { mutableStateOf(0f) }
     var contrast by remember { mutableStateOf(1f) }
     var saturation by remember { mutableStateOf(1f) }
+    var sharpness by remember { mutableStateOf(0f) }
+    var exposure by remember { mutableStateOf(0f) }
+    var warmth by remember { mutableStateOf(0f) }
     var showColorAdjust by remember { mutableStateOf(false) }
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
     val context = LocalContext.current
@@ -183,6 +194,9 @@ fun EditImageScreen(
                             addFilter(GPUImageBrightnessFilter(brightness))
                             addFilter(GPUImageContrastFilter(contrast))
                             addFilter(GPUImageSaturationFilter(saturation))
+                            addFilter(GPUImageSharpenFilter(sharpness))
+                            addFilter(GPUImageExposureFilter(exposure))
+                            addFilter(GPUImageWhiteBalanceFilter(5500f + (warmth * 4000f), warmth * 0.1f))
                         }
                         gpuImage.setImage(currentBitmap)
                         gpuImage.setFilter(filterGroup)
@@ -264,6 +278,9 @@ fun EditImageScreen(
                                         addFilter(GPUImageBrightnessFilter(brightness))
                                         addFilter(GPUImageContrastFilter(contrast))
                                         addFilter(GPUImageSaturationFilter(saturation))
+                                        addFilter(GPUImageSharpenFilter(sharpness))
+                                        addFilter(GPUImageExposureFilter(exposure))
+                                        addFilter(GPUImageWhiteBalanceFilter(5500f + (warmth * 4000f), warmth * 0.1f))
                                     }
                                     view.filter = filterGroup
                                 }
@@ -322,14 +339,30 @@ fun EditImageScreen(
                             brightness = brightness,
                             contrast = contrast,
                             saturation = saturation,
+                            sharpness = sharpness,
+                            exposure = exposure,
+                            warmth = warmth,
                             onBrightnessChange = { brightness = it },
                             onContrastChange = { contrast = it },
-                            onSaturationChange = { saturation = it }
+                            onSaturationChange = { saturation = it },
+                            onSharpnessChange = { sharpness = it },
+                            onExposureChange = { exposure = it },
+                            onWarmthChange = { warmth = it }
                         )
                     }
                 }
             }
         }
+    }
+
+    // Cập nhật GPUImage filters
+    val filterGroup = GPUImageFilterGroup().apply {
+        addFilter(GPUImageBrightnessFilter(brightness))
+        addFilter(GPUImageContrastFilter(contrast))
+        addFilter(GPUImageSaturationFilter(saturation))
+        addFilter(GPUImageSharpenFilter(sharpness))
+        addFilter(GPUImageExposureFilter(exposure))
+        addFilter(GPUImageWhiteBalanceFilter(5500f + (warmth * 4000f), warmth * 0.1f))
     }
 }
 
@@ -372,55 +405,205 @@ private fun EditButton(
     }
 }
 
+// Enum class để quản lý các loại điều chỉnh màu
+enum class ColorAdjustType {
+    NONE,
+    BRIGHTNESS,
+    CONTRAST,
+    SATURATION,
+    SHARPNESS,
+    EXPOSURE,
+    WARMTH
+}
+
 @Composable
 private fun ColorAdjustControls(
     brightness: Float,
     contrast: Float,
     saturation: Float,
+    sharpness: Float = 0f,
+    exposure: Float = 0f,
+    warmth: Float = 0f,
     onBrightnessChange: (Float) -> Unit,
     onContrastChange: (Float) -> Unit,
-    onSaturationChange: (Float) -> Unit
+    onSaturationChange: (Float) -> Unit,
+    onSharpnessChange: (Float) -> Unit = {},
+    onExposureChange: (Float) -> Unit = {},
+    onWarmthChange: (Float) -> Unit = {},
 ) {
-    Column(modifier = Modifier.padding(16.dp)) {
-        Text("Brightness", color = Color.White)
-        Slider(
-            value = brightness,
-            onValueChange = onBrightnessChange,
-            valueRange = -1f..1f,
-            colors = SliderDefaults.colors(
-                thumbColor = Color.White,
-                activeTrackColor = Color.White,
-                inactiveTrackColor = Color.Gray
-            )
-        )
+    var selectedAdjustment by remember { mutableStateOf(ColorAdjustType.NONE) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp)
+    ) {
+        // Hiển thị slider được chọn với animation
+        AnimatedVisibility(
+            visible = selectedAdjustment != ColorAdjustType.NONE,
+            enter = fadeIn() + expandVertically(),
+            exit = fadeOut() + shrinkVertically()
+        ) {
+            when (selectedAdjustment) {
+                ColorAdjustType.BRIGHTNESS -> AdjustSlider(
+                    value = brightness,
+                    onValueChange = onBrightnessChange,
+                    valueRange = -1f..1f,
+                    label = "Brightness"
+                )
+                ColorAdjustType.CONTRAST -> AdjustSlider(
+                    value = contrast,
+                    onValueChange = onContrastChange,
+                    valueRange = 0.5f..2f,
+                    label = "Contrast"
+                )
+                ColorAdjustType.SATURATION -> AdjustSlider(
+                    value = saturation,
+                    onValueChange = onSaturationChange,
+                    valueRange = 0f..2f,
+                    label = "Saturation"
+                )
+                ColorAdjustType.SHARPNESS -> AdjustSlider(
+                    value = sharpness,
+                    onValueChange = onSharpnessChange,
+                    valueRange = 0f..4f,
+                    label = "Sharpness"
+                )
+                ColorAdjustType.EXPOSURE -> AdjustSlider(
+                    value = exposure,
+                    onValueChange = onExposureChange,
+                    valueRange = -2f..2f,
+                    label = "Exposure"
+                )
+                ColorAdjustType.WARMTH -> AdjustSlider(
+                    value = warmth,
+                    onValueChange = onWarmthChange,
+                    valueRange = -1f..1f,
+                    label = "Warmth"
+                )
+                ColorAdjustType.NONE -> {}
+            }
+        }
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        Text("Contrast", color = Color.White)
+        // Thanh công cụ điều chỉnh màu
+        LazyRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            items(ColorAdjustType.values().filter { it != ColorAdjustType.NONE }) { type ->
+                AdjustButton(
+                    type = type,
+                    isSelected = selectedAdjustment == type,
+                    onClick = {
+                        selectedAdjustment = if (selectedAdjustment == type) {
+                            ColorAdjustType.NONE
+                        } else {
+                            type
+                        }
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AdjustSlider(
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    valueRange: ClosedFloatingPointRange<Float>,
+    label: String
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = label,
+                color = Color.White,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                text = String.format("%.1f", value),
+                color = Color.White,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
         Slider(
-            value = contrast,
-            onValueChange = onContrastChange,
-            valueRange = 0.5f..2f,
+            value = value,
+            onValueChange = onValueChange,
+            valueRange = valueRange,
             colors = SliderDefaults.colors(
                 thumbColor = Color.White,
                 activeTrackColor = Color.White,
-                inactiveTrackColor = Color.Gray
-            )
+                inactiveTrackColor = Color.Gray.copy(alpha = 0.5f)
+            ),
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+@Composable
+private fun AdjustButton(
+    type: ColorAdjustType,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(8.dp)
+    ) {
+        Icon(
+            painter = when (type) {
+                ColorAdjustType.BRIGHTNESS -> painterResource(id = R.drawable.brightness)
+                ColorAdjustType.CONTRAST -> painterResource(id = R.drawable.contrast)
+                ColorAdjustType.SATURATION -> painterResource(id = R.drawable.saturation)
+                ColorAdjustType.SHARPNESS -> painterResource(id = R.drawable.bleach)
+                ColorAdjustType.EXPOSURE -> painterResource(id = R.drawable.exposure)
+                ColorAdjustType.WARMTH -> painterResource(id = R.drawable.thermometer)
+                ColorAdjustType.NONE -> painterResource(id = R.drawable.close)
+            },
+            contentDescription = type.name,
+            tint = if (isSelected) Color.White else Color.Gray,
+            modifier = Modifier.size(24.dp)
         )
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(4.dp))
 
-        Text("Saturation", color = Color.White)
-        Slider(
-            value = saturation,
-            onValueChange = onSaturationChange,
-            valueRange = 0f..2f,
-            colors = SliderDefaults.colors(
-                thumbColor = Color.White,
-                activeTrackColor = Color.White,
-                inactiveTrackColor = Color.Gray
-            )
+        Text(
+            text = type.name.lowercase().capitalize(),
+            color = if (isSelected) Color.White else Color.Gray,
+            style = MaterialTheme.typography.bodySmall,
+            fontSize = 12.sp
         )
+
+        // Indicator for selected item
+        AnimatedVisibility(
+            visible = isSelected,
+            enter = fadeIn() + expandVertically(),
+            exit = fadeOut() + shrinkVertically()
+        ) {
+            Box(
+                modifier = Modifier
+                    .padding(top = 4.dp)
+                    .size(4.dp)
+                    .background(Color.White, CircleShape)
+            )
+        }
     }
 }
 
