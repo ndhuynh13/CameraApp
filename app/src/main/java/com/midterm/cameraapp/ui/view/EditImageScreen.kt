@@ -64,25 +64,41 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.yalantis.ucrop.UCrop
 import jp.co.cyberagent.android.gpuimage.GPUImageView
 import jp.co.cyberagent.android.gpuimage.filter.GPUImageBrightnessFilter
+import jp.co.cyberagent.android.gpuimage.filter.GPUImageColorInvertFilter
 import jp.co.cyberagent.android.gpuimage.filter.GPUImageContrastFilter
 import jp.co.cyberagent.android.gpuimage.filter.GPUImageExposureFilter
+import jp.co.cyberagent.android.gpuimage.filter.GPUImageFilter
 import jp.co.cyberagent.android.gpuimage.filter.GPUImageFilterGroup
+import jp.co.cyberagent.android.gpuimage.filter.GPUImageGlassSphereFilter
+import jp.co.cyberagent.android.gpuimage.filter.GPUImageGrayscaleFilter
+import jp.co.cyberagent.android.gpuimage.filter.GPUImageKuwaharaFilter
+import jp.co.cyberagent.android.gpuimage.filter.GPUImageMonochromeFilter
+import jp.co.cyberagent.android.gpuimage.filter.GPUImagePosterizeFilter
 import jp.co.cyberagent.android.gpuimage.filter.GPUImageSaturationFilter
 import jp.co.cyberagent.android.gpuimage.filter.GPUImageSharpenFilter
+import jp.co.cyberagent.android.gpuimage.filter.GPUImageSketchFilter
+import jp.co.cyberagent.android.gpuimage.filter.GPUImageSwirlFilter
+import jp.co.cyberagent.android.gpuimage.filter.GPUImageToonFilter
+import jp.co.cyberagent.android.gpuimage.filter.GPUImageVignetteFilter
 import jp.co.cyberagent.android.gpuimage.filter.GPUImageWhiteBalanceFilter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -112,6 +128,10 @@ fun EditImageScreen(
 
     // Thêm state để theo dõi ảnh preview
     var previewUri by remember { mutableStateOf<Uri?>(image.uri) }
+
+    // Thêm state cho filter
+    var showFilters by remember { mutableStateOf(false) }
+    var currentFilter by remember { mutableStateOf<GPUImageFilter>(GPUImageFilter()) }
 
     // Load bitmap khi màn hình được tạo
     LaunchedEffect(image.uri) {
@@ -188,29 +208,42 @@ fun EditImageScreen(
         bitmap?.let { currentBitmap ->
             scope.launch(Dispatchers.IO) {
                 try {
-                    val savedUri = if (showColorAdjust) {
-                        // Nếu đang adjust color, lấy bitmap đã chỉnh sửa từ GPUImage
-                        val filterGroup = GPUImageFilterGroup().apply {
-                            addFilter(GPUImageBrightnessFilter(brightness))
-                            addFilter(GPUImageContrastFilter(contrast))
-                            addFilter(GPUImageSaturationFilter(saturation))
-                            addFilter(GPUImageSharpenFilter(sharpness))
-                            addFilter(GPUImageExposureFilter(exposure))
-                            addFilter(GPUImageWhiteBalanceFilter(5500f + (warmth * 4000f), warmth * 0.1f))
-                        }
-                        gpuImage.setImage(currentBitmap)
-                        gpuImage.setFilter(filterGroup)
-                        val editedBitmap = gpuImage.bitmapWithFilterApplied
-                        saveBitmapToGallery(context, editedBitmap)
-                    } else {
-                        // Nếu chỉ crop hoặc không chỉnh sửa, lưu bitmap hiện tại
-                        saveBitmapToGallery(context, currentBitmap)
+                    // Tạo filter group mới
+                    val filterGroup = GPUImageFilterGroup()
+
+                    // Thêm current filter trước (nếu có)
+                    if (currentFilter !is GPUImageFilter || currentFilter.javaClass != GPUImageFilter::class.java) {
+                        filterGroup.addFilter(currentFilter)
                     }
+
+                    // Thêm các color adjustment filters
+                    if (showColorAdjust) {
+                        filterGroup.addFilter(GPUImageBrightnessFilter(brightness))
+                        filterGroup.addFilter(GPUImageContrastFilter(contrast))
+                        filterGroup.addFilter(GPUImageSaturationFilter(saturation))
+                        filterGroup.addFilter(GPUImageSharpenFilter(sharpness))
+                        filterGroup.addFilter(GPUImageExposureFilter(exposure))
+                        filterGroup.addFilter(GPUImageWhiteBalanceFilter(5500f + (warmth * 4000f), warmth * 0.1f))
+                    }
+
+                    // Áp dụng filter group vào GPUImage
+                    gpuImage.setImage(currentBitmap)
+                    gpuImage.setFilter(filterGroup)
+
+                    // Lấy bitmap đã được áp dụng filter
+                    val editedBitmap = gpuImage.bitmapWithFilterApplied
+
+                    // Log để debug
+                    Log.d("SaveImage", "Current Filter: ${currentFilter.javaClass.simpleName}")
+                    Log.d("SaveImage", "Filter Count: ${filterGroup.filters.size}")
+
+                    // Lưu bitmap và lấy URI
+                    val savedUri = saveBitmapToGallery(context, editedBitmap)
 
                     // Cập nhật preview URI sau khi lưu
                     withContext(Dispatchers.Main) {
-                        savedUri?.let {
-                            previewUri = it
+                        savedUri?.let { uri ->
+                            previewUri = uri
                         }
                         onSave()
                     }
@@ -232,8 +265,22 @@ fun EditImageScreen(
             SmallTopAppBar(
                 title = { Text("Edit Image", color = Color.White) },
                 navigationIcon = {
-                    IconButton(onClick = onClose) {
-                        Icon(Icons.Default.Close, "Close", tint = Color.White)
+                    IconButton(
+                        onClick = when {
+                            showColorAdjust -> { { showColorAdjust = false } }
+                            showFilters -> { { showFilters = false } }
+                            else -> onClose
+                        }
+                    ) {
+                        Icon(
+                            imageVector = if (showColorAdjust || showFilters) {
+                                Icons.Default.ArrowBack
+                            } else {
+                                Icons.Default.Close
+                            },
+                            contentDescription = if (showColorAdjust || showFilters) "Back" else "Close",
+                            tint = Color.White
+                        )
                     }
                 },
                 actions = {
@@ -260,8 +307,8 @@ fun EditImageScreen(
                         color = Color.White
                     )
                 } else {
-                    if (showColorAdjust) {
-                        // Hiển thị GPUImageView khi đang adjust color
+                    if (showColorAdjust || showFilters) {
+                        // Hiển thị GPUImageView khi đang adjust color hoặc filter
                         bitmap?.let { bmp ->
                             AndroidView(
                                 factory = { context ->
@@ -275,14 +322,21 @@ fun EditImageScreen(
                                 update = { view ->
                                     view.setImage(bmp)
                                     val filterGroup = GPUImageFilterGroup().apply {
-                                        addFilter(GPUImageBrightnessFilter(brightness))
-                                        addFilter(GPUImageContrastFilter(contrast))
-                                        addFilter(GPUImageSaturationFilter(saturation))
-                                        addFilter(GPUImageSharpenFilter(sharpness))
-                                        addFilter(GPUImageExposureFilter(exposure))
-                                        addFilter(GPUImageWhiteBalanceFilter(5500f + (warmth * 4000f), warmth * 0.1f))
+                                        if (showFilters) {
+                                            addFilter(currentFilter)
+                                        }
+                                        if (showColorAdjust) {
+                                            addFilter(GPUImageBrightnessFilter(brightness))
+                                            addFilter(GPUImageContrastFilter(contrast))
+                                            addFilter(GPUImageSaturationFilter(saturation))
+                                            addFilter(GPUImageSharpenFilter(sharpness))
+                                            addFilter(GPUImageExposureFilter(exposure))
+                                            addFilter(GPUImageWhiteBalanceFilter(5500f + (warmth * 4000f), warmth * 0.1f))
+                                        }
                                     }
                                     view.filter = filterGroup
+                                    // Log để debug
+                                    Log.d("Preview", "Updating view with filter: ${currentFilter.javaClass.simpleName}")
                                 }
                             )
                         }
@@ -301,55 +355,95 @@ fun EditImageScreen(
                 }
             }
 
-            // Bottom Controls
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = Color(0xFF2A2A2A)
+            // Bottom Controls với animation
+            AnimatedVisibility(
+                visible = !showColorAdjust && !showFilters,
+                enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+                exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
             ) {
-                Column {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly
-                    ) {
-                        EditButton(
-                            icon = painterResource(id = R.drawable.crop),
-                            label = "Crop",
-                            onClick = {
-                                image.uri?.let { startCrop(it) }
-                            }
-                        )
-                        EditButton(
-                            icon = painterResource(id = R.drawable.adjust_color),
-                            label = "Adjust",
-                            onClick = {
-                                showColorAdjust = !showColorAdjust
-                            }
-                        )
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = Color(0xFF2A2A2A)
+                ) {
+                    Column {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            horizontalArrangement = Arrangement.SpaceEvenly
+                        ) {
+                            EditButton(
+                                icon = painterResource(id = R.drawable.crop),
+                                label = "Crop",
+                                onClick = {
+                                    image.uri?.let { startCrop(it) }
+                                }
+                            )
+                            EditButton(
+                                icon = painterResource(id = R.drawable.adjust_color),
+                                label = "Adjust",
+                                onClick = { showColorAdjust = true }
+                            )
+                            EditButton(
+                                icon = painterResource(id = R.drawable.filter),
+                                label = "Filter",
+                                onClick = { showFilters = true }
+                            )
+                        }
                     }
+                }
+            }
 
-                    // Color Adjust Controls
-                    AnimatedVisibility(
-                        visible = showColorAdjust,
-                        enter = fadeIn() + expandVertically(),
-                        exit = fadeOut() + shrinkVertically()
-                    ) {
-                        ColorAdjustControls(
-                            brightness = brightness,
-                            contrast = contrast,
-                            saturation = saturation,
-                            sharpness = sharpness,
-                            exposure = exposure,
-                            warmth = warmth,
-                            onBrightnessChange = { brightness = it },
-                            onContrastChange = { contrast = it },
-                            onSaturationChange = { saturation = it },
-                            onSharpnessChange = { sharpness = it },
-                            onExposureChange = { exposure = it },
-                            onWarmthChange = { warmth = it }
-                        )
-                    }
+            // Color Adjust Controls với animation
+            AnimatedVisibility(
+                visible = showColorAdjust,
+                enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+                exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
+            ) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = Color(0xFF2A2A2A)
+                ) {
+                    ColorAdjustControls(
+                        brightness = brightness,
+                        contrast = contrast,
+                        saturation = saturation,
+                        sharpness = sharpness,
+                        exposure = exposure,
+                        warmth = warmth,
+                        onBrightnessChange = { brightness = it },
+                        onContrastChange = { contrast = it },
+                        onSaturationChange = { saturation = it },
+                        onSharpnessChange = { sharpness = it },
+                        onExposureChange = { exposure = it },
+                        onWarmthChange = { warmth = it }
+                    )
+                }
+            }
+
+            // Filter Controls
+            AnimatedVisibility(
+                visible = showFilters,
+                enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+                exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
+            ) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = Color(0xFF2A2A2A)
+                ) {
+                    FilterControls(
+                        onFilterSelected = { filter ->
+                            currentFilter = filter
+                            // Cập nhật bitmap khi áp dụng filter
+                            bitmap?.let { currentBitmap ->
+                                gpuImage.setImage(currentBitmap)
+                                gpuImage.setFilter(filter)
+                                bitmap = gpuImage.bitmapWithFilterApplied
+                                Log.d("FilterApply", "Filter applied: ${filter.javaClass.simpleName}")
+                                Log.d("FilterApply", "Bitmap updated: ${bitmap?.width}x${bitmap?.height}")
+                            }
+                        }
+                    )
                 }
             }
         }
@@ -436,61 +530,67 @@ private fun ColorAdjustControls(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(16.dp)
+            .padding(vertical = 16.dp)
     ) {
-        // Hiển thị slider được chọn với animation
+        // Slider với animation
         AnimatedVisibility(
             visible = selectedAdjustment != ColorAdjustType.NONE,
             enter = fadeIn() + expandVertically(),
             exit = fadeOut() + shrinkVertically()
         ) {
-            when (selectedAdjustment) {
-                ColorAdjustType.BRIGHTNESS -> AdjustSlider(
-                    value = brightness,
-                    onValueChange = onBrightnessChange,
-                    valueRange = -1f..1f,
-                    label = "Brightness"
-                )
-                ColorAdjustType.CONTRAST -> AdjustSlider(
-                    value = contrast,
-                    onValueChange = onContrastChange,
-                    valueRange = 0.5f..2f,
-                    label = "Contrast"
-                )
-                ColorAdjustType.SATURATION -> AdjustSlider(
-                    value = saturation,
-                    onValueChange = onSaturationChange,
-                    valueRange = 0f..2f,
-                    label = "Saturation"
-                )
-                ColorAdjustType.SHARPNESS -> AdjustSlider(
-                    value = sharpness,
-                    onValueChange = onSharpnessChange,
-                    valueRange = 0f..4f,
-                    label = "Sharpness"
-                )
-                ColorAdjustType.EXPOSURE -> AdjustSlider(
-                    value = exposure,
-                    onValueChange = onExposureChange,
-                    valueRange = -2f..2f,
-                    label = "Exposure"
-                )
-                ColorAdjustType.WARMTH -> AdjustSlider(
-                    value = warmth,
-                    onValueChange = onWarmthChange,
-                    valueRange = -1f..1f,
-                    label = "Warmth"
-                )
-                ColorAdjustType.NONE -> {}
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 16.dp)
+            ) {
+                when (selectedAdjustment) {
+                    ColorAdjustType.BRIGHTNESS -> AdjustSlider(
+                        value = brightness,
+                        onValueChange = onBrightnessChange,
+                        valueRange = -1f..1f,
+                        label = "Brightness"
+                    )
+                    ColorAdjustType.CONTRAST -> AdjustSlider(
+                        value = contrast,
+                        onValueChange = onContrastChange,
+                        valueRange = 0.5f..2f,
+                        label = "Contrast"
+                    )
+                    ColorAdjustType.SATURATION -> AdjustSlider(
+                        value = saturation,
+                        onValueChange = onSaturationChange,
+                        valueRange = 0f..2f,
+                        label = "Saturation"
+                    )
+                    ColorAdjustType.SHARPNESS -> AdjustSlider(
+                        value = sharpness,
+                        onValueChange = onSharpnessChange,
+                        valueRange = 0f..4f,
+                        label = "Sharpness"
+                    )
+                    ColorAdjustType.EXPOSURE -> AdjustSlider(
+                        value = exposure,
+                        onValueChange = onExposureChange,
+                        valueRange = -2f..2f,
+                        label = "Exposure"
+                    )
+                    ColorAdjustType.WARMTH -> AdjustSlider(
+                        value = warmth,
+                        onValueChange = onWarmthChange,
+                        valueRange = -1f..1f,
+                        label = "Warmth"
+                    )
+                    ColorAdjustType.NONE -> {}
+                }
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Thanh công cụ điều chỉnh màu
+        // Adjustment buttons
         LazyRow(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceEvenly
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             items(ColorAdjustType.values().filter { it != ColorAdjustType.NONE }) { type ->
                 AdjustButton(
@@ -563,9 +663,13 @@ private fun AdjustButton(
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(12.dp))
+            .background(
+                if (isSelected) Color(0xFF2196F3) else Color.Transparent,
+                RoundedCornerShape(12.dp)
+            )
             .clickable(onClick = onClick)
-            .padding(8.dp)
+            .padding(12.dp)
     ) {
         Icon(
             painter = when (type) {
@@ -632,6 +736,105 @@ private suspend fun saveBitmapToGallery(context: Context, bitmap: Bitmap): Uri? 
             Log.e("SaveImage", "Error saving image", e)
             null
         }
+    }
+}
+
+enum class GPUFilterType {
+    NONE,
+    //SEPIA,
+    GRAYSCALE,
+    SKETCH,
+    TOON,
+    POSTERIZE,
+    MONOCHROME,
+    INVERT,
+    VIGNETTE,
+    KUWAHARA,
+    GLASS_SPHERE,
+    SWIRL
+}
+
+@Composable
+private fun FilterControls(
+    onFilterSelected: (GPUImageFilter) -> Unit
+) {
+    var selectedFilter by remember { mutableStateOf(GPUFilterType.NONE) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 16.dp)
+    ) {
+        LazyRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            items(GPUFilterType.values()) { filterType ->
+                FilterButton(
+                    type = filterType,
+                    isSelected = selectedFilter == filterType,
+                    onClick = {
+                        selectedFilter = filterType
+                        val filter = when (filterType) {
+                            GPUFilterType.NONE -> GPUImageFilter()
+                            //GPUFilterType.SEPIA -> GPUImageSepiaFilter()
+                            GPUFilterType.GRAYSCALE -> GPUImageGrayscaleFilter()
+                            GPUFilterType.SKETCH -> GPUImageSketchFilter()
+                            GPUFilterType.TOON -> GPUImageToonFilter()
+                            GPUFilterType.POSTERIZE -> GPUImagePosterizeFilter()
+                            GPUFilterType.MONOCHROME -> GPUImageMonochromeFilter()
+                            GPUFilterType.INVERT -> GPUImageColorInvertFilter()
+                            GPUFilterType.VIGNETTE -> GPUImageVignetteFilter()
+                            GPUFilterType.KUWAHARA -> GPUImageKuwaharaFilter()
+                            GPUFilterType.GLASS_SPHERE -> GPUImageGlassSphereFilter()
+                            GPUFilterType.SWIRL -> GPUImageSwirlFilter()
+                        }
+                        onFilterSelected(filter)
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FilterButton(
+    type: GPUFilterType,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .width(80.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(
+                if (isSelected) Color(0xFF2196F3) else Color.Transparent,
+                RoundedCornerShape(12.dp)
+            )
+            .clickable(onClick = onClick)
+            .padding(12.dp)
+    ) {
+        // Thumbnail preview của filter (có thể thêm sau)
+        Box(
+            modifier = Modifier
+                .size(60.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color.DarkGray)
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Text(
+            text = type.name.lowercase().capitalize(),
+            color = if (isSelected) Color.White else Color.Gray,
+            style = MaterialTheme.typography.bodySmall,
+            fontSize = 12.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
