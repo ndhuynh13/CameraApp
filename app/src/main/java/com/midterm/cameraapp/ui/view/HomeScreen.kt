@@ -19,6 +19,9 @@ import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -51,6 +54,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -67,9 +71,19 @@ import com.midterm.cameraapp.R
 import com.midterm.cameraapp.data.GalleryImage
 import com.midterm.cameraapp.data.ImageGallery
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.io.File
+
+// Thêm enum class cho các tùy chọn hẹn giờ
+enum class TimerOption(val seconds: Int) {
+    OFF(0),
+    THREE(3),
+    FIVE(5),
+    TEN(10)
+}
 
 @Composable
 fun CameraScreen(
@@ -94,6 +108,8 @@ fun CameraScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val imageGallery = remember { ImageGallery() }
+    var selectedTimerSeconds by remember { mutableStateOf(0) }
+    var countdownSeconds by remember { mutableStateOf<Int?>(null) }
 
     // Load images when the screen is created
     LaunchedEffect(Unit) {
@@ -147,10 +163,16 @@ fun CameraScreen(
                 aspectRatio = aspectRatio,
                 isGridEnabled = isGridEnabled,
                 modifier = Modifier.fillMaxSize(),
-                isFlashEnabled = isFlashEnabled// Full screen
+                isFlashEnabled = isFlashEnabled
             )
 
-            // 2. UI Controls (layer trên cùng)
+            // 2. Countdown Timer Overlay (layer giữa)
+            CountdownTimerOverlay(
+                countdownSeconds = countdownSeconds,
+                modifier = Modifier.fillMaxSize()
+            )
+
+            // 3. UI Controls (layer trên cùng)
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -173,7 +195,11 @@ fun CameraScreen(
                     },
                     isGridEnabled = isGridEnabled,
                     onGridToggle = { isGridEnabled = !isGridEnabled },
-                    modifier = Modifier.align(Alignment.TopCenter)
+                    modifier = Modifier.align(Alignment.TopCenter),
+                    onTimerSelected = { seconds ->
+                        selectedTimerSeconds = seconds
+                        Log.d("Timer", "Selected timer: $seconds seconds")
+                    }
                 )
 
                 // Bottom Controls
@@ -206,7 +232,11 @@ fun CameraScreen(
                             reloadGallery()
                         }
                     },
-                    modifier = Modifier.align(Alignment.BottomCenter)
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                    timerSeconds = selectedTimerSeconds,
+                    onCountdownUpdate = { seconds ->
+                        countdownSeconds = seconds
+                    }
                 )
             }
         }
@@ -220,23 +250,20 @@ fun MainContent(
     imageCapture: ImageCapture,
     onCameraReady: () -> Unit,
     cameraProvider: ProcessCameraProvider?,
-    aspectRatio: Int, // Nhận aspectRatio từ CameraScreen
+    aspectRatio: Int,
     isGridEnabled: Boolean,
     modifier: Modifier = Modifier,
-    isFlashEnabled: Boolean, // Thêm tham số nà
+    isFlashEnabled: Boolean,
 ) {
-    // Log để debug
-    Log.d("AspectRatio", "Current aspect ratio: $aspectRatio")
-
     Box(
         modifier = modifier
             .fillMaxWidth()
             .aspectRatio(
                 when (aspectRatio) {
                     AspectRatio.RATIO_16_9 -> 9f / 16f
-                    AspectRatio.RATIO_4_3 -> 3f / 4f  // Sửa lại từ 3f/4f thành 4f/3f
-                    0 -> 1f // 1:1
-                    else -> 3f / 4f // Mặc định là 4:3
+                    AspectRatio.RATIO_4_3 -> 3f / 4f
+                    0 -> 1f
+                    else -> 3f / 4f
                 }
             )
             .clip(RoundedCornerShape(20.dp))
@@ -417,7 +444,9 @@ fun BottomBar(
     latestImage: GalleryImage?,
     onGalleryClick: () -> Unit,
     onImageSaved: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    timerSeconds: Int = 0,
+    onCountdownUpdate: (Int?) -> Unit
 ) {
     val context = LocalContext.current
     val mainExecutor = ContextCompat.getMainExecutor(context)
@@ -514,6 +543,15 @@ fun BottomBar(
                 onClick = {
                     if (isCameraReady) {
                         scope.launch {
+                            if (timerSeconds > 0) {
+                                // Đếm ngược
+                                for (i in timerSeconds downTo 1) {
+                                    Log.d("Timer", "Countdown: $i seconds")
+                                    delay(1000) // Đợi 1 giây
+                                }
+                            }
+
+                            // Chụp ảnh sau khi đếm ngược xong
                             tempPhotoFile = withContext(Dispatchers.IO) {
                                 File.createTempFile("IMG_", ".jpg", context.cacheDir)
                             }
@@ -526,7 +564,7 @@ fun BottomBar(
                                     override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                                         Log.d("CameraShot", "Image captured at: ${tempPhotoFile!!.absolutePath}")
                                         isShotTaken = true
-                                        onCaptureImage(Uri.fromFile(tempPhotoFile!!)) // Hiển thị ảnh nhưng chưa lưu
+                                        onCaptureImage(Uri.fromFile(tempPhotoFile!!))
                                     }
 
                                     override fun onError(exception: ImageCaptureException) {
@@ -609,10 +647,13 @@ fun UITopBar(
     onAspectRatioSelected: (String) -> Unit,
     isGridEnabled: Boolean,
     onGridToggle: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onTimerSelected: (Int) -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
+    var timerExpanded by remember { mutableStateOf(false) }
     var selectedRatio by remember { mutableStateOf("4:3") }
+    var selectedTimer by remember { mutableStateOf(TimerOption.OFF) }
 
     Box(
         modifier = modifier.fillMaxWidth()
@@ -621,10 +662,26 @@ fun UITopBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(0.dp),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // Timer Button
+            IconButton(
+                onClick = { timerExpanded = !timerExpanded },
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(if (selectedTimer != TimerOption.OFF) Color(0xFF2196F3) else Color.DarkGray)
+            ) {
+                Icon(
+                    painter = painterResource(id = R.drawable.timer), // Thêm icon timer vào resources
+                    contentDescription = "Timer",
+                    tint = Color.White,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+
             // Flash Toggle Button
             IconButton(
                 onClick = onFlashToggle,
@@ -671,6 +728,38 @@ fun UITopBar(
                     tint = Color.White,
                     modifier = Modifier.size(24.dp)
                 )
+            }
+        }
+
+        // Timer Selector Menu
+        if (timerExpanded) {
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 70.dp)
+                    .width(280.dp),
+                shape = RoundedCornerShape(12.dp),
+                color = Color(0xFF2A2A2A),
+                shadowElevation = 8.dp
+            ) {
+                Row(
+                    modifier = Modifier
+                        .padding(8.dp)
+                        .fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    TimerOption.values().forEach { option ->
+                        TimerOptionItem(
+                            seconds = option.seconds,
+                            isSelected = selectedTimer == option,
+                            onClick = {
+                                selectedTimer = option
+                                onTimerSelected(option.seconds)
+                                timerExpanded = false
+                            }
+                        )
+                    }
+                }
             }
         }
 
@@ -736,6 +825,30 @@ private fun AspectRatioItem(
     }
 }
 
+@Composable
+private fun TimerOptionItem(
+    seconds: Int,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .width(60.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (isSelected) Color(0xFF2196F3) else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp, horizontal = 12.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = if (seconds == 0) "OFF" else "${seconds}s",
+            color = Color.White,
+            fontSize = 14.sp,
+            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+        )
+    }
+}
+
 // Hàm cập nhật ImageCapture khi thay đổi tỷ lệ
 fun updateImageCaptureConfig(newAspectRatio: Int, currentImageCapture: ImageCapture): ImageCapture {
     val builder = ImageCapture.Builder()
@@ -756,4 +869,45 @@ fun updateImageCaptureConfig(newAspectRatio: Int, currentImageCapture: ImageCapt
     }
 
     return builder.build()
+}
+
+// Tạo Composable riêng cho Countdown Timer
+@Composable
+fun CountdownTimerOverlay(
+    countdownSeconds: Int?,
+    modifier: Modifier = Modifier
+) {
+    if (countdownSeconds != null) {
+        Box(
+            modifier = modifier,
+            contentAlignment = Alignment.Center
+        ) {
+            // Thêm animation cho countdown
+            val animatedScale by animateFloatAsState(
+                targetValue = if (countdownSeconds > 0) 1f else 0f,
+                animationSpec = spring(
+                    dampingRatio = 0.8f,
+                    stiffness = Spring.StiffnessLow
+                )
+            )
+
+            Box(
+                modifier = Modifier
+                    .scale(animatedScale)
+                    .size(120.dp)
+                    .background(
+                        color = Color.Black.copy(alpha = 0.6f),
+                        shape = CircleShape
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = countdownSeconds.toString(),
+                    color = Color.White,
+                    fontSize = 72.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        }
+    }
 }

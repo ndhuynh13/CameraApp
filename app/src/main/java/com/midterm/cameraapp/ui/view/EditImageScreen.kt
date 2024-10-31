@@ -285,9 +285,45 @@ fun EditImageScreen(
                 },
                 actions = {
                     TextButton(
-                        onClick = { saveCurrentImage() }
+                        onClick = {
+                            if (showFilters) {
+                                // Khi ấn Apply trong màn filter
+                                bitmap?.let { currentBitmap ->
+                                    scope.launch(Dispatchers.Default) {
+                                        try {
+                                            // Tạo filter group mới để áp dụng filter
+                                            val filterGroup = GPUImageFilterGroup()
+                                            filterGroup.addFilter(currentFilter)
+
+                                            // Áp dụng filter và lấy bitmap mới
+                                            gpuImage.setImage(currentBitmap)
+                                            gpuImage.setFilter(filterGroup)
+                                            val newBitmap = gpuImage.bitmapWithFilterApplied
+
+                                            withContext(Dispatchers.Main) {
+                                                // Cập nhật bitmap mới
+                                                bitmap = newBitmap
+                                                // Reset GPUImage để tránh lỗi
+                                                gpuImage.setImage(newBitmap)
+                                                gpuImage.setFilter(GPUImageFilter())
+                                                showFilters = false
+                                                Log.d("FilterApply", "Filter applied and bitmap updated")
+                                            }
+                                        } catch (e: Exception) {
+                                            Log.e("FilterApply", "Error applying filter", e)
+                                        }
+                                    }
+                                }
+                            } else {
+                                // Khi ấn Save, lưu ảnh vào gallery
+                                saveCurrentImage()
+                            }
+                        }
                     ) {
-                        Text("Save", color = Color.White)
+                        Text(
+                            if (showFilters) "Apply" else "Save",
+                            color = Color.White
+                        )
                     }
                 },
                 colors = TopAppBarDefaults.smallTopAppBarColors(
@@ -308,7 +344,7 @@ fun EditImageScreen(
                     )
                 } else {
                     if (showColorAdjust || showFilters) {
-                        // Hiển thị GPUImageView khi đang adjust color hoặc filter
+                        // Preview cho color adjustment và filters
                         bitmap?.let { bmp ->
                             AndroidView(
                                 factory = { context ->
@@ -335,22 +371,23 @@ fun EditImageScreen(
                                         }
                                     }
                                     view.filter = filterGroup
-                                    // Log để debug
-                                    Log.d("Preview", "Updating view with filter: ${currentFilter.javaClass.simpleName}")
+                                    view.requestRender()
                                 }
                             )
                         }
                     } else {
-                        // Hiển thị ảnh thường hoặc ảnh đã crop
-                        AsyncImage(
-                            model = ImageRequest.Builder(LocalContext.current)
-                                .data(previewUri)
-                                .crossfade(true)
-                                .build(),
-                            contentDescription = "Image Preview",
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Fit
-                        )
+                        // Hiển thị ảnh đã được chỉnh sửa với bitmap mới nhất
+                        bitmap?.let { bmp ->
+                            AsyncImage(
+                                model = ImageRequest.Builder(LocalContext.current)
+                                    .data(bmp)
+                                    .crossfade(true)
+                                    .build(),
+                                contentDescription = "Image Preview",
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Fit
+                            )
+                        }
                     }
                 }
             }
@@ -434,14 +471,8 @@ fun EditImageScreen(
                     FilterControls(
                         onFilterSelected = { filter ->
                             currentFilter = filter
-                            // Cập nhật bitmap khi áp dụng filter
-                            bitmap?.let { currentBitmap ->
-                                gpuImage.setImage(currentBitmap)
-                                gpuImage.setFilter(filter)
-                                bitmap = gpuImage.bitmapWithFilterApplied
-                                Log.d("FilterApply", "Filter applied: ${filter.javaClass.simpleName}")
-                                Log.d("FilterApply", "Bitmap updated: ${bitmap?.width}x${bitmap?.height}")
-                            }
+                            // Không cập nhật bitmap ngay, chỉ cập nhật filter để preview
+                            Log.d("FilterPreview", "Filter selected: ${filter.javaClass.simpleName}")
                         }
                     )
                 }
