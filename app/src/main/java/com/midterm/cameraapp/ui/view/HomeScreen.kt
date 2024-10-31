@@ -19,9 +19,6 @@ import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -29,7 +26,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -52,9 +48,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -73,7 +67,6 @@ import com.midterm.cameraapp.data.ImageGallery
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -164,12 +157,6 @@ fun CameraScreen(
                 isGridEnabled = isGridEnabled,
                 modifier = Modifier.fillMaxSize(),
                 isFlashEnabled = isFlashEnabled
-            )
-
-            // 2. Countdown Timer Overlay (layer giữa)
-            CountdownTimerOverlay(
-                countdownSeconds = countdownSeconds,
-                modifier = Modifier.fillMaxSize()
             )
 
             // 3. UI Controls (layer trên cùng)
@@ -869,45 +856,4 @@ fun updateImageCaptureConfig(newAspectRatio: Int, currentImageCapture: ImageCapt
     }
 
     return builder.build()
-}
-
-// Tạo Composable riêng cho Countdown Timer
-@Composable
-fun CountdownTimerOverlay(
-    countdownSeconds: Int?,
-    modifier: Modifier = Modifier
-) {
-    if (countdownSeconds != null) {
-        Box(
-            modifier = modifier,
-            contentAlignment = Alignment.Center
-        ) {
-            // Thêm animation cho countdown
-            val animatedScale by animateFloatAsState(
-                targetValue = if (countdownSeconds > 0) 1f else 0f,
-                animationSpec = spring(
-                    dampingRatio = 0.8f,
-                    stiffness = Spring.StiffnessLow
-                )
-            )
-
-            Box(
-                modifier = Modifier
-                    .scale(animatedScale)
-                    .size(120.dp)
-                    .background(
-                        color = Color.Black.copy(alpha = 0.6f),
-                        shape = CircleShape
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = countdownSeconds.toString(),
-                    color = Color.White,
-                    fontSize = 72.sp,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-        }
-    }
 }
