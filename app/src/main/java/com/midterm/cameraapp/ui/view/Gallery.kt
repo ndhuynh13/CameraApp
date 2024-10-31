@@ -66,16 +66,41 @@ fun GalleryScreen(
     onEditImage: (GalleryImage) -> Unit,
     onReload: suspend () -> Unit
 ) {
-    var selectedImage by remember { mutableStateOf<GalleryImage?>(null) }
+    var selectedImages by remember { mutableStateOf<Set<GalleryImage>>(emptySet()) }
+    var isMultiSelectMode by remember { mutableStateOf(false) }
     var showFullscreen by remember { mutableStateOf<GalleryImage?>(null) }
     var showDeleteDialog by remember { mutableStateOf<GalleryImage?>(null) }
     var showEditScreen by remember { mutableStateOf<GalleryImage?>(null) }
+    var showMultiDeleteDialog by remember { mutableStateOf(false) } // Thêm state mới
 
     val scope = rememberCoroutineScope()
 
     // Sắp xếp lại danh sách ảnh theo thời gian mới nhất
     val sortedImages = remember(images) {
         images.sortedByDescending { it.dateAdded }
+    }
+    // Thêm hàm xử lý chọn nhiều ảnh
+    val handleImageSelection = { image: GalleryImage ->
+        if (isMultiSelectMode) {
+            selectedImages = if (selectedImages.contains(image)) {
+                selectedImages - image
+            } else {
+                selectedImages + image
+            }
+            if (selectedImages.isEmpty()) {
+                isMultiSelectMode = false
+            }
+        } else {
+            showFullscreen = image
+        }
+    }
+
+// Thêm hàm xử lý long press
+    val handleLongPress = { image: GalleryImage ->
+        if (!isMultiSelectMode) {
+            isMultiSelectMode = true
+            selectedImages = setOf(image)
+        }
     }
 
     // Sử dụng coroutine scope để gọi suspend function
@@ -84,7 +109,7 @@ fun GalleryScreen(
             onReload()
         }
     }
-    // Delete Confirmation Dialog
+    // Single Delete Dialog
     showDeleteDialog?.let { imageToDelete ->
         AlertDialog(
             onDismissRequest = { showDeleteDialog = null },
@@ -95,8 +120,8 @@ fun GalleryScreen(
                     onClick = {
                         onDeleteImage(imageToDelete)
                         showDeleteDialog = null
-                        showFullscreen = null // Đóng fullscreen nếu đang mở
-                        selectedImage = null // Đóng bottom action bar nếu đang mở
+                        selectedImages = emptySet()
+                        isMultiSelectMode = false
                     }
                 ) {
                     Text("Delete", color = Color(0xFFE53935))
@@ -104,6 +129,39 @@ fun GalleryScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showDeleteDialog = null }) {
+                    Text("Cancel")
+                }
+            },
+            containerColor = Color(0xFF2A2A2A),
+            titleContentColor = Color.White,
+            textContentColor = Color.White
+        )
+    }
+
+    // Multi Delete Dialog
+    if (showMultiDeleteDialog) {
+        AlertDialog(
+            onDismissRequest = { showMultiDeleteDialog = false },
+            title = { Text("Delete Images") },
+            text = { Text("Are you sure you want to delete ${selectedImages.size} images?") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        selectedImages.forEach { onDeleteImage(it) }
+                        selectedImages = emptySet()
+                        isMultiSelectMode = false
+                        showMultiDeleteDialog = false
+                    }
+                ) {
+                    Text("Delete", color = Color(0xFFE53935))
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showMultiDeleteDialog = false
+                    }
+                ) {
                     Text("Cancel")
                 }
             },
@@ -145,7 +203,7 @@ fun GalleryScreen(
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null // Bỏ hiệu ứng ripple
-                    ) { selectedImage = null }
+                    ) { selectedImages = emptySet() }
             ) {
                 Column(modifier = Modifier.fillMaxSize()) {
                     // Top App Bar
@@ -175,8 +233,9 @@ fun GalleryScreen(
                         items(sortedImages) { image ->
                             GalleryItem(
                                 image = image,
-                                onImageClick = { showFullscreen = image },
-                                onLongPress = { selectedImage = image }
+                                isSelected = selectedImages.contains(image),
+                                onImageClick = { handleImageSelection(image) },
+                                onLongPress = { handleLongPress(image) }
                             )
                         }
                     }
@@ -185,7 +244,7 @@ fun GalleryScreen(
 
             // Bottom Action Bar
             AnimatedVisibility(
-                visible = selectedImage != null,
+                visible = isMultiSelectMode,
                 enter = slideInVertically(initialOffsetY = { it }),
                 exit = slideOutVertically(targetOffsetY = { it }),
                 modifier = Modifier.align(Alignment.BottomCenter)
@@ -195,13 +254,19 @@ fun GalleryScreen(
                 ) {
                     BottomActionBar(
                         onDelete = {
-                            showDeleteDialog = selectedImage // Hiển thị dialog xác nhận
+                            if (selectedImages.size == 1) {
+                                showDeleteDialog = selectedImages.first()
+                            } else {
+                                showMultiDeleteDialog = true
+                            }
                         },
                         onEdit = {
-                            selectedImage?.let { onEditImage(it) }
-                            selectedImage = null
+                            // Disable edit when multiple images selected
                         },
-                        onDismiss = { selectedImage = null }
+                        onDismiss = {
+                            selectedImages = emptySet()
+                            isMultiSelectMode = false
+                        }
                     )
                 }
             }
@@ -213,6 +278,7 @@ fun GalleryScreen(
 @Composable
 private fun GalleryItem(
     image: GalleryImage,
+    isSelected: Boolean,
     onImageClick: () -> Unit,
     onLongPress: () -> Unit
 ) {
@@ -232,6 +298,24 @@ private fun GalleryItem(
             modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Crop
         )
+
+        // Hiển thị dấu check khi ảnh được chọn
+        if (isSelected) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.4f))
+            ) {
+                Icon(
+                    painter = painterResource(id = android.R.drawable.checkbox_on_background),
+                    contentDescription = "Selected",
+                    tint = Color.White,
+                    modifier = Modifier
+                        .size(24.dp)
+                        .align(Alignment.Center)
+                )
+            }
+        }
     }
 }
 
