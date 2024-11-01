@@ -15,44 +15,44 @@ import androidx.core.content.ContextCompat
 import com.midterm.cameraapp.ui.theme.CameraAppTheme
 
 class MainActivity : ComponentActivity() {
-    // Sử dụng ActivityResultContracts để yêu cầu quyền camera
-    private val requestPermissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
-            if (isGranted) {
-                // Nếu quyền được cấp, khởi chạy ứng dụng
-                startApp()
-                // Nếu quyền bị từ chối, hiển thị thông báo
-                Toast.makeText(
-                    this,
-                    "Camera permission is required to use this feature.",
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
+    private val requiredPermissions = arrayOf(
+        Manifest.permission.CAMERA,
+        Manifest.permission.RECORD_AUDIO
+    )
+
+    private val requestPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        if (permissions.all { it.value }) {
+            startApp()
+        } else {
+            // Hiển thị thông báo yêu cầu quyền
+            Toast.makeText(
+                this,
+                "Cần cấp quyền camera và ghi âm để sử dụng ứng dụng",
+                Toast.LENGTH_LONG
+            ).show()
         }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Kiểm tra quyền camera trước khi hiển thị giao diện
-        checkCameraPermission()
+        checkPermissions()
     }
 
-    // Hàm kiểm tra và yêu cầu quyền truy cập camera
-    private fun checkCameraPermission() {
-        val cameraPermission = Manifest.permission.CAMERA
-        if (ContextCompat.checkSelfPermission(
-                this,
-                cameraPermission
-            ) == PackageManager.PERMISSION_GRANTED
-        ) {
-            // Nếu quyền đã được cấp, khởi chạy ứng dụng
+    private fun checkPermissions() {
+        if (requiredPermissions.all { permission ->
+                ContextCompat.checkSelfPermission(
+                    this,
+                    permission
+                ) == PackageManager.PERMISSION_GRANTED
+            }) {
             startApp()
         } else {
-            // Yêu cầu quyền camera nếu chưa được cấp
-            requestPermissionLauncher.launch(cameraPermission)
+            requestPermissionLauncher.launch(requiredPermissions)
         }
     }
 
-    // Hàm khởi chạy ứng dụng sau khi quyền được cấp
     private fun startApp() {
         setContent {
             CameraAppTheme {
@@ -60,7 +60,7 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    CameraScreen()  // Gọi CameraScreen tại đây
+                    CameraScreen()
                 }
             }
         }

@@ -3,7 +3,11 @@ package com.midterm.cameraapp.ui.view
 import CameraGrid
 import GalleryScreen
 import android.content.ContentValues
+import android.content.Context
+import android.content.pm.PackageManager
+import android.media.MediaScannerConnection
 import android.net.Uri
+import android.os.Build
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
@@ -11,6 +15,7 @@ import android.provider.MediaStore
 import android.util.Log
 import android.util.Size
 import android.view.ViewGroup
+import android.widget.Toast
 import androidx.camera.core.AspectRatio
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.CameraState
@@ -18,6 +23,14 @@ import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.video.FallbackStrategy
+import androidx.camera.video.MediaStoreOutputOptions
+import androidx.camera.video.Quality
+import androidx.camera.video.QualitySelector
+import androidx.camera.video.Recorder
+import androidx.camera.video.Recording
+import androidx.camera.video.VideoCapture
+import androidx.camera.video.VideoRecordEvent
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -69,6 +82,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 // Thêm enum class cho các tùy chọn hẹn giờ
 enum class TimerOption(val seconds: Int) {
@@ -77,7 +93,11 @@ enum class TimerOption(val seconds: Int) {
     FIVE(5),
     TEN(10)
 }
-
+// Thêm vào đầu file, sau các import
+enum class CameraMode {
+    PHOTO,
+    VIDEO
+}
 @Composable
 fun CameraScreen(
 ) {
@@ -91,7 +111,6 @@ fun CameraScreen(
         )
     }
     var isCameraReady by remember { mutableStateOf(true) }
-    var cameraProvider: ProcessCameraProvider? = null
     var isFlashEnabled by remember { mutableStateOf(false) }
     var aspectRatio by remember { mutableStateOf(AspectRatio.RATIO_4_3) }
     var isGridEnabled by remember { mutableStateOf(false) }
@@ -103,6 +122,83 @@ fun CameraScreen(
     val imageGallery = remember { ImageGallery() }
     var selectedTimerSeconds by remember { mutableStateOf(0) }
     var countdownSeconds by remember { mutableStateOf<Int?>(null) }
+
+    var cameraMode by remember { mutableStateOf<CameraMode>(CameraMode.PHOTO) }
+    var isRecording by remember { mutableStateOf(false) }
+    var videoCapture: VideoCapture<Recorder>? by remember { mutableStateOf(null) }
+    var recording: Recording? by remember { mutableStateOf(null) }
+    var recordingTime by remember { mutableStateOf(0L) }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var previewView by remember { mutableStateOf<PreviewView?>(null) }
+    var cameraProvider by remember { mutableStateOf<ProcessCameraProvider?>(null) }
+
+    var lastSavedVideoUri by remember { mutableStateOf<Uri?>(null) }
+
+    // Khởi tạo CameraProvider
+    LaunchedEffect(Unit) {
+        val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
+        cameraProvider = cameraProviderFuture.get()
+    }
+
+    // Khởi tạo videoCapture dựa trên cameraMode
+    LaunchedEffect(cameraMode) {
+        if (cameraMode == CameraMode.VIDEO) {
+            try {
+                val qualitySelector = QualitySelector.fromOrderedList(
+                    listOf(Quality.HD, Quality.SD),
+                    FallbackStrategy.lowerQualityOrHigherThan(Quality.SD)
+                )
+
+                val recorder = Recorder.Builder()
+                    .setQualitySelector(qualitySelector)
+                    .setExecutor(ContextCompat.getMainExecutor(context))
+                    .build()
+
+                videoCapture = VideoCapture.withOutput(recorder)
+                Log.d("VideoCapture", "VideoCapture initialized successfully")
+            } catch (e: Exception) {
+                Log.e("VideoCapture", "Error initializing VideoCapture: ${e.message}", e)
+            }
+        } else {
+            videoCapture = null
+        }
+    }
+
+    // Cập nhật camera khi thay đổi mode
+    LaunchedEffect(cameraMode, videoCapture, cameraProvider) {
+        if (cameraMode == CameraMode.VIDEO &&
+            videoCapture != null &&
+            previewView != null &&
+            cameraProvider != null
+        ) {
+            try {
+                cameraProvider?.unbindAll()
+
+                val preview = Preview.Builder()
+                    .setTargetAspectRatio(aspectRatio)
+                    .build()
+                    .also {
+                        it.setSurfaceProvider(previewView!!.surfaceProvider)
+                    }
+
+                val cameraSelector = CameraSelector.Builder()
+                    .requireLensFacing(lensFacing)
+                    .build()
+
+                cameraProvider?.bindToLifecycle(
+                    lifecycleOwner,
+                    cameraSelector,
+                    preview,
+                    videoCapture
+                )
+
+                Log.d("CameraBinding", "Camera bound successfully for video mode")
+            } catch (e: Exception) {
+                Log.e("CameraError", "Error binding preview: ${e.message}", e)
+            }
+        }
+    }
 
     // Load images when the screen is created
     LaunchedEffect(Unit) {
@@ -145,6 +241,20 @@ fun CameraScreen(
                 .fillMaxSize()
                 .background(Color.Black)
         ) {
+            AndroidView(
+                factory = { ctx ->
+                    PreviewView(ctx).apply {
+                        this.layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                        this.implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                        previewView = this // Lưu reference đến previewView
+                    }
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+
             // 1. Camera Preview (layer dưới cùng)
             MainContent(
                 lensFacing = lensFacing,
@@ -156,7 +266,8 @@ fun CameraScreen(
                 aspectRatio = aspectRatio,
                 isGridEnabled = isGridEnabled,
                 modifier = Modifier.fillMaxSize(),
-                isFlashEnabled = isFlashEnabled
+                isFlashEnabled = isFlashEnabled,
+                videoCapture = videoCapture
             )
 
             // 3. UI Controls (layer trên cùng)
@@ -186,7 +297,10 @@ fun CameraScreen(
                     onTimerSelected = { seconds ->
                         selectedTimerSeconds = seconds
                         Log.d("Timer", "Selected timer: $seconds seconds")
-                    }
+                    },
+                    cameraMode = cameraMode,
+                    onModeChange = { mode -> cameraMode = mode },
+                    recordingTime = recordingTime
                 )
 
                 // Bottom Controls
@@ -223,6 +337,61 @@ fun CameraScreen(
                     timerSeconds = selectedTimerSeconds,
                     onCountdownUpdate = { seconds ->
                         countdownSeconds = seconds
+                    },
+                    cameraMode = cameraMode,
+                    isRecording = isRecording,
+                    onRecordingStart = {
+                        if (!isRecording && videoCapture != null) {
+                            try {
+                                isRecording = true
+                                recording = startRecording(
+                                    videoCapture = videoCapture,
+                                    context = context,
+                                    onVideoSaved = { uri ->
+                                        lastSavedVideoUri = uri
+                                        Log.d("VideoSaved", "Video saved to: $uri")
+                                        Toast.makeText(context, "Video đã được lưu", Toast.LENGTH_SHORT).show()
+                                    },
+                                    onError = { error ->
+                                        Log.e("RecordingError", "Error recording video: $error")
+                                        Toast.makeText(context, error, Toast.LENGTH_SHORT).show()
+                                        isRecording = false
+                                        recording = null
+                                    }
+                                )
+
+                                if (recording == null) {
+                                    isRecording = false
+                                }
+                            } catch (e: Exception) {
+                                Log.e("RecordingError", "Error starting recording: ${e.message}", e)
+                                Toast.makeText(context, "Lỗi khi bắt đầu quay video", Toast.LENGTH_SHORT).show()
+                                isRecording = false
+                                recording = null
+                            }
+                        } else {
+                            Log.d("RecordingError", "Cannot start recording: ${if (isRecording) "Recording in progress" else "VideoCapture not initialized"}")
+                            if (isRecording) {
+                                Toast.makeText(context, "Đang trong quá trình quay video", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(context, "Camera chưa sẵn sàng", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                    onRecordingStop = {
+                        if (isRecording && recording != null) {
+                            try {
+                                Log.d("RecordingStop", "Stopping recording")
+                                recording?.stop()
+                                recording = null
+                                isRecording = false
+                            } catch (e: Exception) {
+                                Log.e("RecordingError", "Error stopping recording: ${e.message}", e)
+                                Toast.makeText(context, "Lỗi khi dừng quay video", Toast.LENGTH_SHORT).show()
+                                recording = null
+                                isRecording = false
+                            }
+                        }
                     }
                 )
             }
@@ -241,6 +410,7 @@ fun MainContent(
     isGridEnabled: Boolean,
     modifier: Modifier = Modifier,
     isFlashEnabled: Boolean,
+    videoCapture: VideoCapture<Recorder>?
 ) {
     Box(
         modifier = modifier
@@ -270,7 +440,8 @@ fun MainContent(
                 onCameraReady = onCameraReady,
                 cameraProvider = cameraProvider,
                 aspectRatio = aspectRatio,
-                isFlashEnabled = isFlashEnabled
+                isFlashEnabled = isFlashEnabled,
+                videoCapture = videoCapture
             )
             // Show Grid
             if (isGridEnabled) {
@@ -289,7 +460,8 @@ fun CameraPreview(
     onCameraReady: () -> Unit,
     cameraProvider: ProcessCameraProvider?,
     aspectRatio: Int,
-    isFlashEnabled: Boolean
+    isFlashEnabled: Boolean,
+    videoCapture: VideoCapture<Recorder>?
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -317,7 +489,8 @@ fun CameraPreview(
                     lensFacing,
                     imageCapture,
                     aspectRatio,
-                    isFlashEnabled
+                    isFlashEnabled,
+                    videoCapture
                 )
                 onCameraReady()
             }, ContextCompat.getMainExecutor(context))
@@ -332,91 +505,62 @@ fun bindPreview(
     lensFacing: Int,
     imageCapture: ImageCapture,
     aspectRatio: Int,
-    isFlashEnabled: Boolean
+    isFlashEnabled: Boolean,
+    videoCapture: VideoCapture<Recorder>?
 ) {
-    val previewBuilder = Preview.Builder()
-
-    when (aspectRatio) {
-        AspectRatio.RATIO_16_9 -> {
-            previewBuilder.setTargetAspectRatio(AspectRatio.RATIO_16_9)
-            Log.d("Preview", "Setting preview ratio to 16:9")
-        }
-        AspectRatio.RATIO_4_3 -> {
-            previewBuilder.setTargetAspectRatio(AspectRatio.RATIO_4_3)
-            Log.d("Preview", "Setting preview ratio to 4:3")
-        }
-        0 -> { // 1:1
-            previewBuilder.setTargetResolution(Size(1080, 1080))
-            Log.d("Preview", "Setting preview ratio to 1:1")
-        }
-    }
-
-    val preview = previewBuilder.build().also {
-        it.setSurfaceProvider(previewView.surfaceProvider)
-    }
-
-
-    val cameraSelector = CameraSelector.Builder()
-        .requireLensFacing(lensFacing)
-        .build()
-
-    // Cập nhật cấu hình flash cho imageCapture
-    imageCapture.flashMode = when (isFlashEnabled) {
-        true -> ImageCapture.FLASH_MODE_ON
-        false -> ImageCapture.FLASH_MODE_OFF
-    }
-
     try {
-        // Unbind mọi phiên camera trước khi bind phiên mới
         cameraProvider.unbindAll()
 
-        val camera = cameraProvider.bindToLifecycle(
-            lifecycleOwner,
-            cameraSelector,
-            preview,
-            imageCapture
+        val preview = Preview.Builder()
+            .setTargetAspectRatio(aspectRatio)
+            .build()
+            .also {
+                it.setSurfaceProvider(previewView.surfaceProvider)
+            }
+
+        val cameraSelector = CameraSelector.Builder()
+            .requireLensFacing(lensFacing)
+            .build()
+
+        // Cấu hình quality cho video
+        val qualitySelector = QualitySelector.from(
+            Quality.HIGHEST,
+            FallbackStrategy.higherQualityOrLowerThan(Quality.SD)
         )
+
+        // Bind use cases dựa trên mode
+        val camera = if (videoCapture != null) {
+            Log.d("CameraBinding", "Binding with video capture")
+            cameraProvider.bindToLifecycle(
+                lifecycleOwner,
+                cameraSelector,
+                preview,
+                videoCapture
+            )
+        } else {
+            Log.d("CameraBinding", "Binding without video capture")
+            cameraProvider.bindToLifecycle(
+                lifecycleOwner,
+                cameraSelector,
+                preview,
+                imageCapture
+            )
+        }
+
+        // Cập nhật cấu hình flash cho imageCapture
+        imageCapture.flashMode = when (isFlashEnabled) {
+            true -> ImageCapture.FLASH_MODE_ON
+            false -> ImageCapture.FLASH_MODE_OFF
+        }
 
         // Kiểm tra xem thiết bị có hỗ trợ flash không
         val hasFlash = camera.cameraInfo.hasFlashUnit()
-        Log.d("CameraFlash", "Device has flash unit: $hasFlash")
-
         if (hasFlash) {
             camera.cameraControl.enableTorch(isFlashEnabled)
         }
 
-        // Kiểm tra trạng thái của camera sau khi bind
-        val cameraInfo = camera.cameraInfo
-        cameraInfo.cameraState.observe(lifecycleOwner) { state ->
-            when (state.type) {
-                CameraState.Type.OPEN -> {
-                    Log.d("CameraState", "Camera đã mở thành công")
-                }
-
-                CameraState.Type.CLOSED -> {
-                    Log.d("CameraState", "Camera đã đóng")
-                }
-
-                CameraState.Type.PENDING_OPEN -> {
-                    Log.d("CameraState", "Camera đang chờ mở")
-                }
-
-                CameraState.Type.CLOSING -> {
-                    Log.d("CameraState", "Camera đang đóng")
-                }
-
-                else -> {
-                    Log.d("CameraState", "Trạng thái camera không xác định: ${state.type}")
-                }
-            }
-
-            if (state.error != null) {
-                Log.e("CameraStateError", "Camera gặp lỗi: ${state.error}")
-            }
-        }
-
     } catch (exc: Exception) {
-        Log.e("CameraBindError", "Lỗi khi bind camera", exc)
+        Log.e("CameraBindError", "Lỗi khi bind camera: ${exc.message}", exc)
     }
 }
 @Composable
@@ -433,7 +577,11 @@ fun BottomBar(
     onImageSaved: () -> Unit,
     modifier: Modifier = Modifier,
     timerSeconds: Int = 0,
-    onCountdownUpdate: (Int?) -> Unit
+    onCountdownUpdate: (Int?) -> Unit,
+    cameraMode: CameraMode,
+    isRecording: Boolean,
+    onRecordingStart: () -> Unit,
+    onRecordingStop: () -> Unit,
 ) {
     val context = LocalContext.current
     val mainExecutor = ContextCompat.getMainExecutor(context)
@@ -528,40 +676,54 @@ fun BottomBar(
 
             IconButton(
                 onClick = {
-                    if (isCameraReady) {
-                        scope.launch {
-                            if (timerSeconds > 0) {
-                                // Đếm ngược
-                                for (i in timerSeconds downTo 1) {
-                                    Log.d("Timer", "Countdown: $i seconds")
-                                    delay(1000) // Đợi 1 giây
-                                }
-                            }
-
-                            // Chụp ảnh sau khi đếm ngược xong
-                            tempPhotoFile = withContext(Dispatchers.IO) {
-                                File.createTempFile("IMG_", ".jpg", context.cacheDir)
-                            }
-                            val outputOptions = ImageCapture.OutputFileOptions.Builder(tempPhotoFile!!).build()
-
-                            imageCapture.takePicture(
-                                outputOptions,
-                                mainExecutor,
-                                object : ImageCapture.OnImageSavedCallback {
-                                    override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                                        Log.d("CameraShot", "Image captured at: ${tempPhotoFile!!.absolutePath}")
-                                        isShotTaken = true
-                                        onCaptureImage(Uri.fromFile(tempPhotoFile!!))
+                    when (cameraMode) {
+                        CameraMode.PHOTO -> {
+                            // Existing photo capture logic
+                            if (isCameraReady) {
+                                scope.launch {
+                                    if (timerSeconds > 0) {
+                                        // Đếm ngược
+                                        for (i in timerSeconds downTo 1) {
+                                            Log.d("Timer", "Countdown: $i seconds")
+                                            delay(1000) // Đợi 1 giây
+                                        }
                                     }
 
-                                    override fun onError(exception: ImageCaptureException) {
-                                        Log.e("CameraShot", "Image capture failed: ${exception.message}", exception)
+                                    // Chụp ảnh sau khi đếm ngược xong
+                                    tempPhotoFile = withContext(Dispatchers.IO) {
+                                        File.createTempFile("IMG_", ".jpg", context.cacheDir)
                                     }
+                                    val outputOptions = ImageCapture.OutputFileOptions.Builder(tempPhotoFile!!).build()
+
+                                    imageCapture.takePicture(
+                                        outputOptions,
+                                        mainExecutor,
+                                        object : ImageCapture.OnImageSavedCallback {
+                                            override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                                                Log.d("CameraShot", "Image captured at: ${tempPhotoFile!!.absolutePath}")
+                                                isShotTaken = true
+                                                onCaptureImage(Uri.fromFile(tempPhotoFile!!))
+                                            }
+
+                                            override fun onError(exception: ImageCaptureException) {
+                                                Log.e("CameraShot", "Image capture failed: ${exception.message}", exception)
+                                            }
+                                        }
+                                    )
                                 }
-                            )
+                            } else {
+                                Log.d("CameraShot", "Camera is not ready yet!")
+                            }
                         }
-                    } else {
-                        Log.d("CameraShot", "Camera is not ready yet!")
+                        CameraMode.VIDEO -> {
+                            if (isRecording) {
+                                Log.d("VideoRecording", "Stopping recording...")
+                                onRecordingStop()
+                            } else {
+                                Log.d("VideoRecording", "Starting recording...")
+                                onRecordingStart()
+                            }
+                        }
                     }
                 },
                 modifier = Modifier
@@ -569,9 +731,13 @@ fun BottomBar(
                     .size(100.dp)
             ) {
                 Icon(
-                    painter = painterResource(id = R.drawable.shot),
-                    contentDescription = "Shot",
-                    tint = Color(0xFF7A3030),
+                    painter = when {
+                        cameraMode == CameraMode.PHOTO -> painterResource(id = R.drawable.shot)
+                        isRecording -> painterResource(id = R.drawable.stop)
+                        else -> painterResource(id = R.drawable.play)
+                    },
+                    contentDescription = if (cameraMode == CameraMode.PHOTO) "Shot" else "Record",
+                    tint = if (isRecording) Color.Red else Color(0xFF7A3030),
                     modifier = Modifier.size(100.dp)
                 )
             }
@@ -635,7 +801,10 @@ fun UITopBar(
     isGridEnabled: Boolean,
     onGridToggle: () -> Unit,
     modifier: Modifier = Modifier,
-    onTimerSelected: (Int) -> Unit
+    onTimerSelected: (Int) -> Unit,
+    cameraMode: CameraMode,
+    onModeChange: (CameraMode) -> Unit,
+    recordingTime: Long = 0L
 ) {
     var expanded by remember { mutableStateOf(false) }
     var timerExpanded by remember { mutableStateOf(false) }
@@ -645,7 +814,17 @@ fun UITopBar(
     Box(
         modifier = modifier.fillMaxWidth()
     ) {
-        // Main TopBar content
+        // Hiển thị thời gian quay video nếu đang recording
+        if (cameraMode == CameraMode.VIDEO && recordingTime > 0) {
+            Text(
+                text = String.format("%02d:%02d", recordingTime / 60, recordingTime % 60),
+                color = Color.Red,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 16.dp)
+            )
+        }
+
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -653,6 +832,29 @@ fun UITopBar(
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // Camera Mode Switch
+            IconButton(
+                onClick = {
+                    onModeChange(if (cameraMode == CameraMode.PHOTO) CameraMode.VIDEO else CameraMode.PHOTO)
+                },
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(if (cameraMode == CameraMode.VIDEO) Color(0xFF2196F3) else Color.DarkGray)
+            ) {
+                Icon(
+                    painter = painterResource(
+                        id = if (cameraMode == CameraMode.PHOTO)
+                            R.drawable.photo_camera
+                        else
+                            R.drawable.video_camera
+                    ),
+                    contentDescription = "Switch Camera Mode",
+                    tint = Color.White,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+
             // Timer Button
             IconButton(
                 onClick = { timerExpanded = !timerExpanded },
@@ -857,3 +1059,67 @@ fun updateImageCaptureConfig(newAspectRatio: Int, currentImageCapture: ImageCapt
 
     return builder.build()
 }
+
+private fun startRecording(
+    videoCapture: VideoCapture<Recorder>?,
+    context: Context,
+    onVideoSaved: (Uri) -> Unit,
+    onError: (String) -> Unit
+): Recording? {
+    if (videoCapture == null) {
+        onError("VideoCapture chưa được khởi tạo")
+        return null
+    }
+
+    try {
+        Log.d("VideoCapture", "Bắt đầu quay video...")
+
+        val name = "VID_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())}.mp4"
+        val contentValues = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+            put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/CameraApp")
+        }
+
+        val mediaStoreOutput = MediaStoreOutputOptions.Builder(
+            context.contentResolver,
+            MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+        )
+            .setContentValues(contentValues)
+            .build()
+
+        return videoCapture.output
+            .prepareRecording(context, mediaStoreOutput)
+            .apply {
+                if (ContextCompat.checkSelfPermission(
+                        context,
+                        android.Manifest.permission.RECORD_AUDIO
+                    ) == PackageManager.PERMISSION_GRANTED) {
+                    withAudioEnabled()
+                }
+            }
+            .start(ContextCompat.getMainExecutor(context)) { recordEvent ->
+                when (recordEvent) {
+                    is VideoRecordEvent.Start -> {
+                        Log.d("VideoCapture", "Đang quay video...")
+                    }
+                    is VideoRecordEvent.Finalize -> {
+                        if (recordEvent.hasError()) {
+                            onError("Lỗi quay video: ${recordEvent.error}")
+                        } else {
+                            recordEvent.outputResults.outputUri?.let { uri ->
+                                onVideoSaved(uri)
+                            }
+                        }
+                    }
+                }
+            }
+
+    } catch (e: Exception) {
+        val msg = "Không thể bắt đầu quay video: ${e.message}"
+        Log.e("VideoCapture", msg, e)
+        onError(msg)
+        return null
+    }
+}
+
