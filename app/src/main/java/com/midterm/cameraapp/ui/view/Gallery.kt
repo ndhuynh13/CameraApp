@@ -18,11 +18,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -90,7 +88,7 @@ fun GalleryScreen(
     val sortedImages = remember(images) {
         images.sortedByDescending { it.dateAdded }
     }
-    // Thêm hàm xử lý chọn nhiều ảnh
+    // hàm xử lý chọn nhiều ảnh
     val handleImageSelection = { image: GalleryImage ->
         if (isMultiSelectMode) {
             selectedImages = if (selectedImages.contains(image)) {
@@ -106,7 +104,7 @@ fun GalleryScreen(
         }
     }
 
-// Thêm hàm xử lý long press
+// hàm xử lý long press
     val handleLongPress = { image: GalleryImage ->
         if (!isMultiSelectMode) {
             isMultiSelectMode = true
@@ -188,7 +186,6 @@ fun GalleryScreen(
                 image = showEditScreen!!,
                 onClose = { showEditScreen = null },
                 onSave = {
-                    // Implement save functionality
                     showEditScreen = null
                     scope.launch {
                         onReload() // Reload gallery sau khi save
@@ -206,7 +203,7 @@ fun GalleryScreen(
                 onImageChange = { newImage -> showFullscreen = newImage },
                 onEdit = { image -> showEditScreen = image }
             )
-        } else if (showFullscreenVideo != null) {  // Thêm ở đây
+        } else if (showFullscreenVideo != null) {
             FullscreenVideoScreen(
                 video = showFullscreenVideo!!,
                 videos = videos,
@@ -228,7 +225,7 @@ fun GalleryScreen(
                     ) { selectedImages = emptySet() }
             ) {
                 Column(modifier = Modifier.fillMaxSize()) {
-                    // Top App Bar với buttons chọn loại media
+                    // Top App Bar
                     SmallTopAppBar(
                         title = { Text("Gallery") },
                         navigationIcon = {
@@ -362,7 +359,7 @@ private fun GalleryItem(
             contentScale = ContentScale.Crop
         )
 
-        // Hiển thị dấu check khi ảnh được chọn
+        //dấu check khi ảnh được chọn
         if (isSelected) {
             Box(
                 modifier = Modifier
@@ -436,7 +433,6 @@ private fun BottomActionBar(
     }
 }
 
-// Thêm composable mới cho video item
 @Composable
 private fun VideoItem(
     video: VideoItem,
@@ -459,7 +455,7 @@ private fun VideoItem(
             contentScale = ContentScale.Crop
         )
 
-        // Thêm thông tin thời lượng video
+        // thông tin thời lượng video
         Box(
             modifier = Modifier
                 .align(Alignment.BottomStart)

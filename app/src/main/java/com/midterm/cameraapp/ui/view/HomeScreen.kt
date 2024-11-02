@@ -5,7 +5,6 @@ import GalleryScreen
 import android.content.ContentValues
 import android.content.Context
 import android.content.pm.PackageManager
-import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -18,7 +17,6 @@ import android.view.ViewGroup
 import android.widget.Toast
 import androidx.camera.core.AspectRatio
 import androidx.camera.core.CameraSelector
-import androidx.camera.core.CameraState
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
@@ -47,7 +45,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
@@ -86,23 +83,21 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 
-// Thêm enum class cho các tùy chọn hẹn giờ
+// enum cho hen gio chup anh
 enum class TimerOption(val seconds: Int) {
     OFF(0),
     THREE(3),
     FIVE(5),
     TEN(10)
 }
-// Thêm vào đầu file, sau các import
+// enum cho camera mode
 enum class CameraMode {
     PHOTO,
     VIDEO
 }
 
-// Hoặc tạo một object để chứa các constants
 object CameraConstants {
     const val FILENAME_FORMAT = "yyyy-MM-dd-HH-mm-ss-SSS"
 }
@@ -159,7 +154,7 @@ fun CameraScreen(
     // Khởi tạo videoCapture dựa trên cameraMode
     LaunchedEffect(cameraMode) {
         cameraProvider?.unbindAll()
-        delay(200) // Đợi để đảm bảo camera giải phóng xong
+        delay(200) // thêm delay để đợi camera giải phóng
         if (cameraMode == CameraMode.VIDEO) {
             try {
                 cameraProvider?.unbindAll()
@@ -185,7 +180,7 @@ fun CameraScreen(
                     .requireLensFacing(lensFacing)
                     .build()
 
-                delay(100) // Đợi một chút trước khi bind
+                delay(100) // delay de dam bao khoi dong xong
 
                 cameraProvider?.bindToLifecycle(
                     lifecycleOwner,
@@ -201,7 +196,7 @@ fun CameraScreen(
         }
     }
 
-    // Tách riêng phần xử lý recording
+    // xu ly record
     LaunchedEffect(pendingRecording) {
         if (pendingRecording && videoCapture != null) {
             try {
@@ -228,7 +223,7 @@ fun CameraScreen(
         }
     }
 
-    // Load images when the screen is created
+    // loading cho image va video
     LaunchedEffect(Unit) {
         scope.launch {
             images = imageGallery.loadImages(context)
@@ -236,7 +231,7 @@ fun CameraScreen(
         }
     }
 
-    // Định nghĩa reloadGallery như một suspend function
+    // reload image va video
     val reloadGallery: suspend () -> Unit = {
         images = imageGallery.loadImages(context)
         videos = mediaGallery.loadVideos(context)
@@ -297,7 +292,7 @@ fun CameraScreen(
                 modifier = Modifier.fillMaxSize()
             )
 
-            // 1. Camera Preview (layer dưới cùng)
+            // Layer 1. Camera Preview
             MainContent(
                 lensFacing = lensFacing,
                 capturedImageUri = capturedImageUri,
@@ -312,7 +307,7 @@ fun CameraScreen(
                 videoCapture = videoCapture
             )
 
-            // 3. UI Controls (layer trên cùng)
+            // Layer 3. UI Controls
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -355,7 +350,6 @@ fun CameraScreen(
                             CameraSelector.LENS_FACING_BACK
                         }
 
-                        // Đảm bảo camera được chuẩn bị kỹ càng
                         Handler(Looper.getMainLooper()).postDelayed({
                             isCameraReady = true
                         }, 500)
@@ -578,7 +572,7 @@ fun bindPreview(
             )
         }
 
-        // Cập nhật cấu hình flash cho imageCapture
+        // cau hinh flash
         imageCapture.flashMode = when (isFlashEnabled) {
             true -> ImageCapture.FLASH_MODE_ON
             false -> ImageCapture.FLASH_MODE_OFF
@@ -641,7 +635,7 @@ fun BottomBar(
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (isShotTaken) {
-                // Nút Accept - Lưu ảnh vào thư viện thiết bị
+                // Nút Accept lưu ảnh
                 IconButton(onClick = {
                     tempPhotoFile?.let { file ->
                         val contentValues = ContentValues().apply {
@@ -724,7 +718,7 @@ fun BottomBar(
                                         // Đếm ngược
                                         for (i in timerSeconds downTo 1) {
                                             Log.d("Timer", "Countdown: $i seconds")
-                                            delay(1000) // Đợi 1 giây
+                                            delay(1000)
                                         }
                                     }
 
@@ -971,7 +965,7 @@ fun UITopBar(
             }
         }
 
-        // Aspect Ratio Selector Menu (Floating)
+        // Aspect Ratio Selector Menu
         if (expanded) {
             Surface(
                 modifier = Modifier
@@ -1057,7 +1051,7 @@ private fun TimerOptionItem(
     }
 }
 
-// Hàm cập nhật ImageCapture khi thay đổi tỷ lệ
+// Hàm cập nhật ImageCapture khi thay đổi tỷ lệ màn
 fun updateImageCaptureConfig(newAspectRatio: Int, currentImageCapture: ImageCapture): ImageCapture {
     val builder = ImageCapture.Builder()
 

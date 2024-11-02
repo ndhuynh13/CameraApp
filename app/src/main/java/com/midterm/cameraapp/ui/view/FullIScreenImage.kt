@@ -39,7 +39,6 @@ fun FullscreenImageScreen(
 
     // Tìm vị trí hiện tại của ảnh trong danh sách
     val currentIndex = images.indexOf(image)
-    // Reset values when image changes
     LaunchedEffect(image) {
         scale = 1f
         offsetX = 0f
@@ -108,15 +107,15 @@ fun FullscreenImageScreen(
                 detectTransformGestures { centroid, pan, zoom, rotation ->
                     if (scale <= 1f) {
                         // Chỉ cho phép swipe khi không zoom
-                        if (abs(pan.x) > abs(pan.y)) { // Đảm bảo swipe ngang
+                        if (abs(pan.x) > abs(pan.y)) { //swipe ngang
                             when {
                                 pan.x > 50 && currentIndex > 0 -> {
-                                    // Swipe phải -> ảnh trước
+                                    // Swipe phải ảnh trước
                                     onImageChange(images[currentIndex - 1])
                                 }
 
                                 pan.x < -50 && currentIndex < images.size - 1 -> {
-                                    // Swipe trái -> ảnh tiếp
+                                    // Swipe trái ảnh tiếp
                                     onImageChange(images[currentIndex + 1])
                                 }
                             }

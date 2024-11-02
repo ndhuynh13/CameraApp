@@ -26,7 +26,6 @@ class MainActivity : ComponentActivity() {
         if (permissions.all { it.value }) {
             startApp()
         } else {
-            // Hiển thị thông báo yêu cầu quyền
             Toast.makeText(
                 this,
                 "Cần cấp quyền camera và ghi âm để sử dụng ứng dụng",

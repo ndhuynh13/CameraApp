@@ -37,14 +37,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.painter.Painter
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
-import androidx.media3.effect.Crop
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.midterm.cameraapp.R
@@ -76,7 +73,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -141,7 +137,6 @@ fun EditImageScreen(
                 // Load bitmap từ URI
                 var loadedBitmap = MediaStore.Images.Media.getBitmap(context.contentResolver, image.uri)
 
-                // Lấy orientation của ảnh
                 val orientation = getImageOrientation(context, image.uri)
 
                 // Kiểm tra orientation và xoay bitmap nếu cần
@@ -191,7 +186,7 @@ fun EditImageScreen(
         )
 
         val uCropIntent = UCrop.of(uri, destinationUri)
-            .withAspectRatio(0f, 0f) // Tự do điều chỉnh tỷ lệ
+            .withAspectRatio(0f, 0f)
             .withOptions(UCrop.Options().apply {
                 setToolbarColor(Color.Black.toArgb())
                 setStatusBarColor(Color.Black.toArgb())
@@ -208,10 +203,9 @@ fun EditImageScreen(
         bitmap?.let { currentBitmap ->
             scope.launch(Dispatchers.IO) {
                 try {
-                    // Tạo filter group mới
                     val filterGroup = GPUImageFilterGroup()
 
-                    // Thêm current filter trước (nếu có)
+                    // Thêm current filter trước
                     if (currentFilter !is GPUImageFilter || currentFilter.javaClass != GPUImageFilter::class.java) {
                         filterGroup.addFilter(currentFilter)
                     }
@@ -233,7 +227,6 @@ fun EditImageScreen(
                     // Lấy bitmap đã được áp dụng filter
                     val editedBitmap = gpuImage.bitmapWithFilterApplied
 
-                    // Log để debug
                     Log.d("SaveImage", "Current Filter: ${currentFilter.javaClass.simpleName}")
                     Log.d("SaveImage", "Filter Count: ${filterGroup.filters.size}")
 
@@ -303,7 +296,7 @@ fun EditImageScreen(
                                             withContext(Dispatchers.Main) {
                                                 // Cập nhật bitmap mới
                                                 bitmap = newBitmap
-                                                // Reset GPUImage để tránh lỗi
+                                                // Reset GPUImage
                                                 gpuImage.setImage(newBitmap)
                                                 gpuImage.setFilter(GPUImageFilter())
                                                 showFilters = false
@@ -392,7 +385,7 @@ fun EditImageScreen(
                 }
             }
 
-            // Bottom Controls với animation
+            // Bottom Controls
             AnimatedVisibility(
                 visible = !showColorAdjust && !showFilters,
                 enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
@@ -431,7 +424,7 @@ fun EditImageScreen(
                 }
             }
 
-            // Color Adjust Controls với animation
+            // Color Adjust Controls
             AnimatedVisibility(
                 visible = showColorAdjust,
                 enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
@@ -471,7 +464,6 @@ fun EditImageScreen(
                     FilterControls(
                         onFilterSelected = { filter ->
                             currentFilter = filter
-                            // Không cập nhật bitmap ngay, chỉ cập nhật filter để preview
                             Log.d("FilterPreview", "Filter selected: ${filter.javaClass.simpleName}")
                         }
                     )
@@ -742,7 +734,7 @@ private fun AdjustButton(
     }
 }
 
-// Cập nhật hàm saveBitmapToGallery để trả về Uri của ảnh đã lưu
+//Hàm saveBitmapToGallery để trả về Uri của ảnh đã lưu
 private suspend fun saveBitmapToGallery(context: Context, bitmap: Bitmap): Uri? {
     return withContext(Dispatchers.IO) {
         try {
@@ -848,7 +840,6 @@ private fun FilterButton(
             .clickable(onClick = onClick)
             .padding(12.dp)
     ) {
-        // Thumbnail preview của filter (có thể thêm sau)
         Box(
             modifier = Modifier
                 .size(60.dp)
