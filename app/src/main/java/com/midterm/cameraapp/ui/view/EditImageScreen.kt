@@ -50,11 +50,13 @@ import jp.co.cyberagent.android.gpuimage.GPUImage
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Matrix
+import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.expandVertically
@@ -63,6 +65,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -72,6 +76,13 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.ui.graphics.asAndroidPath
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.sp
@@ -101,6 +112,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
+data class PathProperties(
+    val path: Path,
+    val color: Color = Color.Red,
+    val strokeWidth: Float = 5f
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -128,6 +144,11 @@ fun EditImageScreen(
     // Thêm state cho filter
     var showFilters by remember { mutableStateOf(false) }
     var currentFilter by remember { mutableStateOf<GPUImageFilter>(GPUImageFilter()) }
+
+    // Thêm các state cho doodle
+    var showDoodle by remember { mutableStateOf(false) }
+    val paths = remember { mutableStateListOf<PathProperties>() }
+    var currentPath by remember { mutableStateOf<PathProperties?>(null) }
 
     // Load bitmap khi màn hình được tạo
     LaunchedEffect(image.uri) {
@@ -203,45 +224,111 @@ fun EditImageScreen(
         bitmap?.let { currentBitmap ->
             scope.launch(Dispatchers.IO) {
                 try {
-                    val filterGroup = GPUImageFilterGroup()
+                    Log.d("SaveImage", "Original bitmap size: ${currentBitmap.width}x${currentBitmap.height}")
 
-                    // Thêm current filter trước
-                    if (currentFilter !is GPUImageFilter || currentFilter.javaClass != GPUImageFilter::class.java) {
-                        filterGroup.addFilter(currentFilter)
-                    }
+                    // Tạo bitmap mới với cùng kích thước và định dạng ARGB_8888
+                    val drawingBitmap = Bitmap.createBitmap(
+                        currentBitmap.width,
+                        currentBitmap.height,
+                        Bitmap.Config.ARGB_8888
+                    )
+                    val canvas = android.graphics.Canvas(drawingBitmap)
 
-                    // Thêm các color adjustment filters
-                    if (showColorAdjust) {
-                        filterGroup.addFilter(GPUImageBrightnessFilter(brightness))
-                        filterGroup.addFilter(GPUImageContrastFilter(contrast))
-                        filterGroup.addFilter(GPUImageSaturationFilter(saturation))
-                        filterGroup.addFilter(GPUImageSharpenFilter(sharpness))
-                        filterGroup.addFilter(GPUImageExposureFilter(exposure))
-                        filterGroup.addFilter(GPUImageWhiteBalanceFilter(5500f + (warmth * 4000f), warmth * 0.1f))
-                    }
+                    // Vẽ ảnh gốc lên canvas trước
+                    canvas.drawBitmap(currentBitmap, 0f, 0f, null)
+                    Log.d("SaveImage", "Drew original bitmap to canvas")
 
-                    // Áp dụng filter group vào GPUImage
-                    gpuImage.setImage(currentBitmap)
-                    gpuImage.setFilter(filterGroup)
-
-                    // Lấy bitmap đã được áp dụng filter
-                    val editedBitmap = gpuImage.bitmapWithFilterApplied
-
-                    Log.d("SaveImage", "Current Filter: ${currentFilter.javaClass.simpleName}")
-                    Log.d("SaveImage", "Filter Count: ${filterGroup.filters.size}")
-
-                    // Lưu bitmap và lấy URI
-                    val savedUri = saveBitmapToGallery(context, editedBitmap)
-
-                    // Cập nhật preview URI sau khi lưu
-                    withContext(Dispatchers.Main) {
-                        savedUri?.let { uri ->
-                            previewUri = uri
+                    // Vẽ các đường doodle
+                    if (paths.isNotEmpty()) {
+                        Log.d("SaveImage", "Drawing ${paths.size} doodle paths")
+                        val paint = android.graphics.Paint().apply {
+                            color = Color.Red.toArgb()
+                            strokeWidth = 5f
+                            style = android.graphics.Paint.Style.STROKE
+                            strokeJoin = android.graphics.Paint.Join.ROUND
+                            strokeCap = android.graphics.Paint.Cap.ROUND
+                            isAntiAlias = true
                         }
-                        onSave()
+
+                        paths.forEach { pathProperties ->
+                            try {
+                                val androidPath = pathProperties.path.asAndroidPath()
+                                canvas.drawPath(androidPath, paint)
+                                Log.d("SaveImage", "Drew path on canvas")
+                            } catch (e: Exception) {
+                                Log.e("SaveImage", "Error drawing path", e)
+                            }
+                        }
+                    }
+
+                    // Kiểm tra xem có cần áp dụng filter không
+                    val hasFilters = currentFilter !is GPUImageFilter ||
+                            currentFilter.javaClass != GPUImageFilter::class.java ||
+                            showColorAdjust
+
+                    if (hasFilters) {
+                        // Áp dụng filters
+                        val filterGroup = GPUImageFilterGroup()
+
+                        // Thêm current filter nếu không phải filter mặc định
+                        if (currentFilter !is GPUImageFilter || currentFilter.javaClass != GPUImageFilter::class.java) {
+                            filterGroup.addFilter(currentFilter)
+                            Log.d("SaveImage", "Added current filter: ${currentFilter.javaClass.simpleName}")
+                        }
+
+                        // Thêm color adjustment filters nếu có
+                        if (showColorAdjust) {
+                            filterGroup.addFilter(GPUImageBrightnessFilter(brightness))
+                            filterGroup.addFilter(GPUImageContrastFilter(contrast))
+                            filterGroup.addFilter(GPUImageSaturationFilter(saturation))
+                            filterGroup.addFilter(GPUImageSharpenFilter(sharpness))
+                            filterGroup.addFilter(GPUImageExposureFilter(exposure))
+                            filterGroup.addFilter(GPUImageWhiteBalanceFilter(5500f + (warmth * 4000f), warmth * 0.1f))
+                            Log.d("SaveImage", "Added color adjustment filters")
+                        }
+
+                        Log.d("SaveImage", "Filter Count: ${filterGroup.filters.size}")
+
+                        // Áp dụng filters
+                        gpuImage.setImage(drawingBitmap)
+                        gpuImage.setFilter(filterGroup)
+                        val editedBitmap = gpuImage.bitmapWithFilterApplied
+                        Log.d("SaveImage", "Applied filters to bitmap")
+
+                        // Lưu bitmap đã qua xử lý filter
+                        val savedUri = saveBitmapToGallery(context, editedBitmap)
+                        Log.d("SaveImage", "Saved filtered image to gallery: $savedUri")
+
+                        withContext(Dispatchers.Main) {
+                            savedUri?.let { uri ->
+                                previewUri = uri
+                                Toast.makeText(context, "Image saved successfully", Toast.LENGTH_SHORT).show()
+                                onSave() // Gọi callback onSave
+                            }
+                        }
+                    } else {
+                        // Lưu bitmap trực tiếp nếu không có filter
+                        Log.d("SaveImage", "No filters to apply, saving direct bitmap")
+                        val savedUri = saveBitmapToGallery(context, drawingBitmap)
+                        Log.d("SaveImage", "Saved direct bitmap to gallery: $savedUri")
+
+                        withContext(Dispatchers.Main) {
+                            savedUri?.let { uri ->
+                                previewUri = uri
+                                Toast.makeText(context, "Image saved successfully", Toast.LENGTH_SHORT).show()
+                                onSave() // Gọi callback onSave
+                            }
+                        }
                     }
                 } catch (e: Exception) {
-                    Log.e("EditImageScreen", "Error saving image", e)
+                    Log.e("SaveImage", "Error in save process", e)
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(
+                            context,
+                            "Error saving image: ${e.localizedMessage}",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
                 }
             }
         }
@@ -284,6 +371,7 @@ fun EditImageScreen(
                                 bitmap?.let { currentBitmap ->
                                     scope.launch(Dispatchers.Default) {
                                         try {
+                                            Log.d("FilterApply", "Applying filter to bitmap")
                                             // Tạo filter group mới để áp dụng filter
                                             val filterGroup = GPUImageFilterGroup()
                                             filterGroup.addFilter(currentFilter)
@@ -324,12 +412,13 @@ fun EditImageScreen(
                 )
             )
 
-            // Image Preview
+            // Image Preview với Doodle overlay
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
             ) {
+                // Hiển thị ảnh gốc
                 if (isLoading) {
                     CircularProgressIndicator(
                         modifier = Modifier.align(Alignment.Center),
@@ -383,11 +472,65 @@ fun EditImageScreen(
                         }
                     }
                 }
+
+                // Thêm layer Doodle nếu đang trong chế độ vẽ
+                if (showDoodle) {
+                    Canvas(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .pointerInput(Unit) {
+                                detectDragGestures(
+                                    onDragStart = { offset ->
+                                        currentPath = PathProperties(
+                                            path = Path().apply { moveTo(offset.x, offset.y) }
+                                        )
+                                    },
+                                    onDrag = { change, dragAmount ->
+                                        currentPath?.let { pathProperties ->
+                                            val newPath = pathProperties.path.apply {
+                                                relativeLineTo(dragAmount.x, dragAmount.y)
+                                            }
+                                            currentPath = pathProperties.copy(path = newPath)
+                                        }
+                                    },
+                                    onDragEnd = {
+                                        currentPath?.let { paths.add(it) }
+                                        currentPath = null
+                                    }
+                                )
+                            }
+                    ) {
+                        // Vẽ các đường đã lưu
+                        paths.forEach { pathProperties ->
+                            drawPath(
+                                path = pathProperties.path,
+                                color = pathProperties.color,
+                                style = Stroke(
+                                    width = pathProperties.strokeWidth,
+                                    cap = StrokeCap.Round,
+                                    join = StrokeJoin.Round
+                                )
+                            )
+                        }
+                        // Vẽ đường đang vẽ
+                        currentPath?.let { pathProperties ->
+                            drawPath(
+                                path = pathProperties.path,
+                                color = pathProperties.color,
+                                style = Stroke(
+                                    width = pathProperties.strokeWidth,
+                                    cap = StrokeCap.Round,
+                                    join = StrokeJoin.Round
+                                )
+                            )
+                        }
+                    }
+                }
             }
 
             // Bottom Controls
             AnimatedVisibility(
-                visible = !showColorAdjust && !showFilters,
+                visible = !showColorAdjust && !showFilters && !showDoodle,
                 enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
                 exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
             ) {
@@ -395,29 +538,79 @@ fun EditImageScreen(
                     modifier = Modifier.fillMaxWidth(),
                     color = Color(0xFF2A2A2A)
                 ) {
-                    Column {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            horizontalArrangement = Arrangement.SpaceEvenly
-                        ) {
-                            EditButton(
-                                icon = painterResource(id = R.drawable.crop),
-                                label = "Crop",
-                                onClick = {
-                                    image.uri?.let { startCrop(it) }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        EditButton(
+                            icon = painterResource(id = R.drawable.crop),
+                            label = "Crop",
+                            onClick = {
+                                image.uri?.let { startCrop(it) }
+                            }
+                        )
+                        EditButton(
+                            icon = painterResource(id = R.drawable.adjust_color),
+                            label = "Adjust",
+                            onClick = { showColorAdjust = true }
+                        )
+                        EditButton(
+                            icon = painterResource(id = R.drawable.filter),
+                            label = "Filter",
+                            onClick = { showFilters = true }
+                        )
+
+                        // Thêm nút Doodle
+                        EditButton(
+                            icon = painterResource(id = R.drawable.paintbrush), // Thêm icon brush vào resources
+                            label = "Doodle",
+                            onClick = { showDoodle = true }
+                        )
+                    }
+                }
+            }
+
+            // Doodle Controls
+            AnimatedVisibility(
+                visible = showDoodle,
+                enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+                exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
+            ) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = Color(0xFF2A2A2A)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        // Nút Undo
+                        IconButton(
+                            onClick = {
+                                if (paths.isNotEmpty()) {
+                                    paths.removeLast()
                                 }
+                            }
+                        ) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.rotate_left),
+                                contentDescription = "Undo",
+                                tint = Color.White
                             )
-                            EditButton(
-                                icon = painterResource(id = R.drawable.adjust_color),
-                                label = "Adjust",
-                                onClick = { showColorAdjust = true }
-                            )
-                            EditButton(
-                                icon = painterResource(id = R.drawable.filter),
-                                label = "Filter",
-                                onClick = { showFilters = true }
+                        }
+
+                        // Nút Clear
+                        IconButton(
+                            onClick = { paths.clear() }
+                        ) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.close),
+                                contentDescription = "Clear",
+                                tint = Color.White
                             )
                         }
                     }
@@ -470,16 +663,6 @@ fun EditImageScreen(
                 }
             }
         }
-    }
-
-    // Cập nhật GPUImage filters
-    val filterGroup = GPUImageFilterGroup().apply {
-        addFilter(GPUImageBrightnessFilter(brightness))
-        addFilter(GPUImageContrastFilter(contrast))
-        addFilter(GPUImageSaturationFilter(saturation))
-        addFilter(GPUImageSharpenFilter(sharpness))
-        addFilter(GPUImageExposureFilter(exposure))
-        addFilter(GPUImageWhiteBalanceFilter(5500f + (warmth * 4000f), warmth * 0.1f))
     }
 }
 
@@ -745,14 +928,27 @@ private suspend fun saveBitmapToGallery(context: Context, bitmap: Bitmap): Uri? 
                 put(MediaStore.Images.Media.DATE_ADDED, System.currentTimeMillis() / 1000)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES)
+                    put(MediaStore.Images.Media.IS_PENDING, 1)
                 }
             }
 
-            val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+            val uri = context.contentResolver.insert(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                contentValues
+            )
+
             uri?.let {
                 context.contentResolver.openOutputStream(it)?.use { stream ->
                     bitmap.compress(Bitmap.CompressFormat.JPEG, 100, stream)
                 }
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    contentValues.clear()
+                    contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
+                    context.contentResolver.update(it, contentValues, null, null)
+                }
+
+                Log.d("SaveImage", "Image saved successfully at: $uri")
                 uri
             }
         } catch (e: Exception) {
