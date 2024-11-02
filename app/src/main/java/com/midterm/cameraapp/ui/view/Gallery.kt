@@ -28,7 +28,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -51,27 +53,36 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil.compose.rememberAsyncImagePainter
 import com.midterm.cameraapp.data.GalleryImage
+import com.midterm.cameraapp.data.VideoItem
 import com.midterm.cameraapp.ui.view.EditImageScreen
+import com.midterm.cameraapp.ui.view.FullscreenVideoScreen
 import kotlinx.coroutines.launch
+import okhttp3.internal.concurrent.formatDuration
 
-@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GalleryScreen(
     images: List<GalleryImage>,
+    videos: List<VideoItem>,
     onImageClick: (Uri) -> Unit,
     onClose: () -> Unit,
     onDeleteImage: (GalleryImage) -> Unit,
+    onDeleteVideo: (VideoItem) -> Unit,
     onEditImage: (GalleryImage) -> Unit,
-    onReload: suspend () -> Unit
+    onReload: suspend () -> Unit,
+    onReloadVideos: suspend () -> Unit
 ) {
     var selectedImages by remember { mutableStateOf<Set<GalleryImage>>(emptySet()) }
     var isMultiSelectMode by remember { mutableStateOf(false) }
     var showFullscreen by remember { mutableStateOf<GalleryImage?>(null) }
     var showDeleteDialog by remember { mutableStateOf<GalleryImage?>(null) }
     var showEditScreen by remember { mutableStateOf<GalleryImage?>(null) }
-    var showMultiDeleteDialog by remember { mutableStateOf(false) } // Thêm state mới
+    var showMultiDeleteDialog by remember { mutableStateOf(false) }
+    var isShowingVideos by remember { mutableStateOf(false) }
+    var showFullscreenVideo by remember { mutableStateOf<VideoItem?>(null) }
 
     val scope = rememberCoroutineScope()
 
@@ -195,6 +206,17 @@ fun GalleryScreen(
                 onImageChange = { newImage -> showFullscreen = newImage },
                 onEdit = { image -> showEditScreen = image }
             )
+        } else if (showFullscreenVideo != null) {  // Thêm ở đây
+            FullscreenVideoScreen(
+                video = showFullscreenVideo!!,
+                videos = videos,
+                onClose = { showFullscreenVideo = null },
+                onDelete = {
+                    onDeleteVideo(showFullscreenVideo!!)
+                    showFullscreenVideo = null
+                },
+                onVideoChange = { newVideo -> showFullscreenVideo = newVideo }
+            )
         } else {
             // Background Box để xử lý click ra ngoài
             Box(
@@ -206,7 +228,7 @@ fun GalleryScreen(
                     ) { selectedImages = emptySet() }
             ) {
                 Column(modifier = Modifier.fillMaxSize()) {
-                    // Top App Bar
+                    // Top App Bar với buttons chọn loại media
                     SmallTopAppBar(
                         title = { Text("Gallery") },
                         navigationIcon = {
@@ -218,25 +240,66 @@ fun GalleryScreen(
                                 )
                             }
                         },
+                        actions = {
+                            Row(
+                                modifier = Modifier.padding(end = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                TextButton(
+                                    onClick = { isShowingVideos = false },
+                                    colors = ButtonDefaults.textButtonColors(
+                                        contentColor = if (!isShowingVideos) Color.White else Color.Gray
+                                    )
+                                ) {
+                                    Text("Images")
+                                }
+                                TextButton(
+                                    onClick = { isShowingVideos = true },
+                                    colors = ButtonDefaults.textButtonColors(
+                                        contentColor = if (isShowingVideos) Color.White else Color.Gray
+                                    )
+                                ) {
+                                    Text("Videos")
+                                }
+                            }
+                        },
                         colors = TopAppBarDefaults.smallTopAppBarColors(
                             containerColor = Color.Black.copy(alpha = 0.7f),
                             titleContentColor = Color.White
                         )
                     )
 
-                    // Grid of images
-                    LazyVerticalGrid(
-                        columns = GridCells.Fixed(3),
-                        contentPadding = PaddingValues(4.dp),
-                        modifier = Modifier.clickable(enabled = false) {} // Ngăn chặn click event từ parent
-                    ) {
-                        items(sortedImages) { image ->
-                            GalleryItem(
-                                image = image,
-                                isSelected = selectedImages.contains(image),
-                                onImageClick = { handleImageSelection(image) },
-                                onLongPress = { handleLongPress(image) }
-                            )
+                    // Grid of media
+                    if (!isShowingVideos) {
+                        // Hiển thị ảnh
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(3),
+                            contentPadding = PaddingValues(4.dp),
+                            modifier = Modifier.clickable(enabled = false) {}
+                        ) {
+                            items(images.sortedByDescending { it.dateAdded }) { image ->
+                                GalleryItem(
+                                    image = image,
+                                    isSelected = selectedImages.contains(image),
+                                    onImageClick = { handleImageSelection(image) },
+                                    onLongPress = { handleLongPress(image) }
+                                )
+                            }
+                        }
+                    } else {
+                        // Hiển thị video
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(3),
+                            contentPadding = PaddingValues(4.dp),
+                            modifier = Modifier.clickable(enabled = false) {}
+                        ) {
+                            items(videos) { video ->
+                                VideoItem(
+                                    video = video,
+                                    onClick = { showFullscreenVideo = video },
+                                    onDelete = { onDeleteVideo(video) }
+                                )
+                            }
                         }
                     }
                 }
@@ -244,7 +307,7 @@ fun GalleryScreen(
 
             // Bottom Action Bar
             AnimatedVisibility(
-                visible = isMultiSelectMode,
+                visible = isMultiSelectMode && !isShowingVideos,
                 enter = slideInVertically(initialOffsetY = { it }),
                 exit = slideOutVertically(targetOffsetY = { it }),
                 modifier = Modifier.align(Alignment.BottomCenter)
@@ -369,6 +432,68 @@ private fun BottomActionBar(
                     tint = Color.White
                 )
             }
+        }
+    }
+}
+
+// Thêm composable mới cho video item
+@Composable
+private fun VideoItem(
+    video: VideoItem,
+    onClick: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .padding(4.dp)
+            .aspectRatio(1f)
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+    ) {
+        Image(
+            painter = rememberAsyncImagePainter(video.uri),
+            contentDescription = null,
+            modifier = Modifier
+                .fillMaxSize()
+                .clickable(onClick = onClick),
+            contentScale = ContentScale.Crop
+        )
+
+        // Thêm thông tin thời lượng video
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(4.dp)
+                .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
+                .padding(horizontal = 4.dp, vertical = 2.dp)
+        ) {
+            Text(
+                text = formatDuration(video.duration),
+                color = Color.White,
+                fontSize = 12.sp
+            )
+        }
+
+        Icon(
+            imageVector = Icons.Default.PlayArrow,
+            contentDescription = "Video",
+            tint = Color.White,
+            modifier = Modifier
+                .align(Alignment.Center)
+                .size(48.dp)
+        )
+
+        IconButton(
+            onClick = onDelete,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(4.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Delete,
+                contentDescription = "Delete",
+                tint = Color.White
+            )
         }
     }
 }

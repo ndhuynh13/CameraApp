@@ -77,6 +77,8 @@ import coil.compose.rememberAsyncImagePainter
 import com.midterm.cameraapp.R
 import com.midterm.cameraapp.data.GalleryImage
 import com.midterm.cameraapp.data.ImageGallery
+import com.midterm.cameraapp.data.MediaGallery
+import com.midterm.cameraapp.data.VideoItem
 import com.midterm.cameraapp.ui.view.CameraConstants.FILENAME_FORMAT
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -142,10 +144,11 @@ fun CameraScreen(
 
     var lastSavedVideoUri by remember { mutableStateOf<Uri?>(null) }
 
-    // Thêm state để theo dõi trạng thái Surface
-    var isSurfaceReady by remember { mutableStateOf(false) }
 
     var pendingRecording by remember { mutableStateOf(false) }
+    var videos by remember { mutableStateOf<List<VideoItem>>(emptyList()) }
+    val mediaGallery = remember { MediaGallery() }
+
 
     // Khởi tạo CameraProvider
     LaunchedEffect(Unit) {
@@ -229,36 +232,50 @@ fun CameraScreen(
     LaunchedEffect(Unit) {
         scope.launch {
             images = imageGallery.loadImages(context)
+            videos = mediaGallery.loadVideos(context)
         }
     }
 
     // Định nghĩa reloadGallery như một suspend function
     val reloadGallery: suspend () -> Unit = {
         images = imageGallery.loadImages(context)
+        videos = mediaGallery.loadVideos(context)
     }
 
+    // Truyền videos vào GalleryScreen
     if (showGallery) {
         GalleryScreen(
             images = images,
+            videos = videos,
             onImageClick = { uri ->
                 // Handle image click
             },
             onClose = { showGallery = false },
             onDeleteImage = { image ->
                 scope.launch {
-                    // Xử lý xóa ảnh
                     context.contentResolver.delete(
                         image.uri,
                         null,
                         null
                     )
-                    reloadGallery() // Gọi trong coroutine scope
+                    reloadGallery()
+                }
+            },
+            onDeleteVideo = { video ->
+                scope.launch {
+                    context.contentResolver.delete(
+                        video.uri,
+                        null,
+                        null
+                    )
+                    reloadGallery()
                 }
             },
             onEditImage = { image ->
                 // Handle edit
             },
-            onReload = reloadGallery // Truyền suspend function
+            onReload = reloadGallery,
+            onReloadVideos = reloadGallery,
         )
     } else {
         Box(
