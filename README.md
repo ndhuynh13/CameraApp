@@ -33,7 +33,7 @@
   - Độ phơi sáng
   - Nhiệt độ màu
 - Filter màu đa dạng
-
+- Doodle: vẽ lên hình ảnh
 ## Chức Năng Phụ
 
 ### 1. Giao Diện
