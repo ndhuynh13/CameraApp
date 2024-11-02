@@ -77,6 +77,7 @@ import coil.compose.rememberAsyncImagePainter
 import com.midterm.cameraapp.R
 import com.midterm.cameraapp.data.GalleryImage
 import com.midterm.cameraapp.data.ImageGallery
+import com.midterm.cameraapp.ui.view.CameraConstants.FILENAME_FORMAT
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -98,6 +99,12 @@ enum class CameraMode {
     PHOTO,
     VIDEO
 }
+
+// Hoặc tạo một object để chứa các constants
+object CameraConstants {
+    const val FILENAME_FORMAT = "yyyy-MM-dd-HH-mm-ss-SSS"
+}
+
 @Composable
 fun CameraScreen(
 ) {
@@ -135,6 +142,11 @@ fun CameraScreen(
 
     var lastSavedVideoUri by remember { mutableStateOf<Uri?>(null) }
 
+    // Thêm state để theo dõi trạng thái Surface
+    var isSurfaceReady by remember { mutableStateOf(false) }
+
+    var pendingRecording by remember { mutableStateOf(false) }
+
     // Khởi tạo CameraProvider
     LaunchedEffect(Unit) {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
@@ -143,40 +155,24 @@ fun CameraScreen(
 
     // Khởi tạo videoCapture dựa trên cameraMode
     LaunchedEffect(cameraMode) {
+        cameraProvider?.unbindAll()
+        delay(200) // Đợi để đảm bảo camera giải phóng xong
         if (cameraMode == CameraMode.VIDEO) {
             try {
-                val qualitySelector = QualitySelector.fromOrderedList(
-                    listOf(Quality.HD, Quality.SD),
-                    FallbackStrategy.lowerQualityOrHigherThan(Quality.SD)
-                )
-
-                val recorder = Recorder.Builder()
-                    .setQualitySelector(qualitySelector)
-                    .setExecutor(ContextCompat.getMainExecutor(context))
-                    .build()
-
-                videoCapture = VideoCapture.withOutput(recorder)
-                Log.d("VideoCapture", "VideoCapture initialized successfully")
-            } catch (e: Exception) {
-                Log.e("VideoCapture", "Error initializing VideoCapture: ${e.message}", e)
-            }
-        } else {
-            videoCapture = null
-        }
-    }
-
-    // Cập nhật camera khi thay đổi mode
-    LaunchedEffect(cameraMode, videoCapture, cameraProvider) {
-        if (cameraMode == CameraMode.VIDEO &&
-            videoCapture != null &&
-            previewView != null &&
-            cameraProvider != null
-        ) {
-            try {
                 cameraProvider?.unbindAll()
+                val recorder = Recorder.Builder()
+                    .setQualitySelector(
+                        QualitySelector.from(
+                            Quality.HIGHEST,
+                            FallbackStrategy.higherQualityOrLowerThan(Quality.SD)
+                        )
+                    )
+                    .build()
+                videoCapture = VideoCapture.withOutput(recorder)
+                Log.d("CameraBinding", "VideoCapture initialized")
 
+                // Bind camera sau khi khởi tạo VideoCapture
                 val preview = Preview.Builder()
-                    .setTargetAspectRatio(aspectRatio)
                     .build()
                     .also {
                         it.setSurfaceProvider(previewView!!.surfaceProvider)
@@ -186,6 +182,8 @@ fun CameraScreen(
                     .requireLensFacing(lensFacing)
                     .build()
 
+                delay(100) // Đợi một chút trước khi bind
+
                 cameraProvider?.bindToLifecycle(
                     lifecycleOwner,
                     cameraSelector,
@@ -193,9 +191,36 @@ fun CameraScreen(
                     videoCapture
                 )
 
-                Log.d("CameraBinding", "Camera bound successfully for video mode")
+                Log.d("CameraBinding", "Camera bound with video capture")
             } catch (e: Exception) {
-                Log.e("CameraError", "Error binding preview: ${e.message}", e)
+                Log.e("CameraBinding", "Error setting up video capture: ${e.message}", e)
+            }
+        }
+    }
+
+    // Tách riêng phần xử lý recording
+    LaunchedEffect(pendingRecording) {
+        if (pendingRecording && videoCapture != null) {
+            try {
+                recording = startRecording(
+                    videoCapture = videoCapture,
+                    context = context,
+                    onVideoSaved = { uri ->
+                        lastSavedVideoUri = uri
+                        isRecording = false
+                        recording = null
+                        pendingRecording = false
+                    },
+                    onError = { error ->
+                        isRecording = false
+                        recording = null
+                        pendingRecording = false
+                        Toast.makeText(context, error, Toast.LENGTH_SHORT).show()
+                    }
+                )
+            } catch (e: Exception) {
+                Log.e("Recording", "Failed to start recording: ${e.message}")
+                pendingRecording = false
             }
         }
     }
@@ -351,6 +376,7 @@ fun CameraScreen(
                                         lastSavedVideoUri = uri
                                         Log.d("VideoSaved", "Video saved to: $uri")
                                         Toast.makeText(context, "Video đã được lưu", Toast.LENGTH_SHORT).show()
+                                        isRecording = false
                                     },
                                     onError = { error ->
                                         Log.e("RecordingError", "Error recording video: $error")
@@ -368,13 +394,6 @@ fun CameraScreen(
                                 Toast.makeText(context, "Lỗi khi bắt đầu quay video", Toast.LENGTH_SHORT).show()
                                 isRecording = false
                                 recording = null
-                            }
-                        } else {
-                            Log.d("RecordingError", "Cannot start recording: ${if (isRecording) "Recording in progress" else "VideoCapture not initialized"}")
-                            if (isRecording) {
-                                Toast.makeText(context, "Đang trong quá trình quay video", Toast.LENGTH_SHORT).show()
-                            } else {
-                                Toast.makeText(context, "Camera chưa sẵn sàng", Toast.LENGTH_SHORT).show()
                             }
                         }
                     },
@@ -522,11 +541,6 @@ fun bindPreview(
             .requireLensFacing(lensFacing)
             .build()
 
-        // Cấu hình quality cho video
-        val qualitySelector = QualitySelector.from(
-            Quality.HIGHEST,
-            FallbackStrategy.higherQualityOrLowerThan(Quality.SD)
-        )
 
         // Bind use cases dựa trên mode
         val camera = if (videoCapture != null) {
@@ -557,6 +571,14 @@ fun bindPreview(
         val hasFlash = camera.cameraInfo.hasFlashUnit()
         if (hasFlash) {
             camera.cameraControl.enableTorch(isFlashEnabled)
+        }
+
+        // Theo dõi trạng thái camera
+        camera.cameraInfo.cameraState.observe(lifecycleOwner) { state ->
+            Log.d("CameraState", "Camera state: ${state.type}")
+            if (state.error != null) {
+                Log.e("CameraError", "Camera error: ${state.error}")
+            }
         }
 
     } catch (exc: Exception) {
@@ -773,26 +795,6 @@ fun BottomBar(
         }
     }
 }
-@Composable
-fun AspectRatioSelector(onAspectRatioChange: (Int) -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(8.dp),
-        horizontalArrangement = Arrangement.SpaceEvenly
-    ) {
-        Button(onClick = { onAspectRatioChange(AspectRatio.RATIO_4_3) }) {
-            Text("4:3")
-        }
-        Button(onClick = { onAspectRatioChange(AspectRatio.RATIO_16_9) }) {
-            Text("16:9")
-        }
-        Button(onClick = { onAspectRatioChange(1) }) {
-            Text("1:1")
-        }
-    }
-}
-
 @Composable
 fun UITopBar(
     isFlashEnabled: Boolean,
@@ -1074,11 +1076,14 @@ private fun startRecording(
     try {
         Log.d("VideoCapture", "Bắt đầu quay video...")
 
-        val name = "VID_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())}.mp4"
+        val name = SimpleDateFormat(FILENAME_FORMAT, Locale.US)
+            .format(System.currentTimeMillis())
         val contentValues = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, name)
             put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4")
-            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/CameraApp")
+            if (Build.VERSION.SDK_INT > Build.VERSION_CODES.P) {
+                put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/CameraX-Video")
+            }
         }
 
         val mediaStoreOutput = MediaStoreOutputOptions.Builder(
@@ -1104,17 +1109,16 @@ private fun startRecording(
                         Log.d("VideoCapture", "Đang quay video...")
                     }
                     is VideoRecordEvent.Finalize -> {
-                        if (recordEvent.hasError()) {
-                            onError("Lỗi quay video: ${recordEvent.error}")
-                        } else {
+                        if (!recordEvent.hasError()) {
                             recordEvent.outputResults.outputUri?.let { uri ->
                                 onVideoSaved(uri)
                             }
+                        } else {
+                            onError("Lỗi quay video: ${recordEvent.error}")
                         }
                     }
                 }
             }
-
     } catch (e: Exception) {
         val msg = "Không thể bắt đầu quay video: ${e.message}"
         Log.e("VideoCapture", msg, e)
@@ -1122,4 +1126,5 @@ private fun startRecording(
         return null
     }
 }
+
 
